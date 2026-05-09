@@ -715,6 +715,10 @@ function novoProcesso() {
   if (irpResp.getSelectedButton() !== ui.Button.OK) return;
   var temIRP = /sim/i.test(irpResp.getResponseText()) ? 'Sim' : 'Não';
 
+  var linkResp = ui.prompt('Novo Processo', 'Link SUAP (URL completa do processo — pode deixar em branco):', ui.ButtonSet.OK_CANCEL);
+  if (linkResp.getSelectedButton() !== ui.Button.OK) return;
+  var linkSuap = linkResp.getResponseText().trim();
+
   // Setor fica "A definir" — a equipe preenche depois na planilha
   // (pode variar por etapa, então não faz sentido perguntar uma vez só)
   var setor = 'A definir';
@@ -765,132 +769,120 @@ function novoProcesso() {
       case 'Setor Requisitante':  return setor;
       case 'Status':              return 'Em planejamento';
       case 'Tem IRP?':            return temIRP;
-      case 'Link SUAP':           return '';
+      case 'Link SUAP':           return linkSuap;
       default:                    return '';
     }
   });
-  wsProc.appendRow(novaLinhaProc);
+  // ── Localiza a primeira linha vazia na aba Processos ───────────────────
+  // getDataRange() só lê linhas com CONTEÚDO — linhas pré-formatadas sem
+  // valores ficam fora desse range. Por isso lemos um bloco explícito de
+  // até 150 linhas após o cabeçalho, cobrindo dados reais + linhas vazias
+  // pré-formatadas.
+  var colProcP = hProc.indexOf('ProcessoID');
+  var procRowSheet = -1;
+  var primeiraLinhaProc = hProcIdx + 2;                      // 1ª linha de dados (1-based)
+  var nColsProc        = hProc.length;
+  var limiteLinhasProc = Math.min(wsProc.getMaxRows() - primeiraLinhaProc + 1, 150);
+  if (limiteLinhasProc > 0) {
+    var blocoProc = wsProc.getRange(primeiraLinhaProc, 1, limiteLinhasProc, nColsProc).getValues();
+    for (var pi = 0; pi < blocoProc.length; pi++) {
+      if (String(blocoProc[pi][colProcP] || '').trim() === '') {
+        procRowSheet = primeiraLinhaProc + pi;               // linha real na planilha (1-based)
+        break;
+      }
+    }
+  }
+  if (procRowSheet < 0) {
+    ui.alert('Não há linhas disponíveis na aba Processos.\nAdicione mais linhas pré-formatadas.');
+    return;
+  }
+  wsProc.getRange(procRowSheet, 1, 1, novaLinhaProc.length).setValues([novaLinhaProc]);
 
-  // ── Insere bloco de etapas padrão na aba Etapas ──────────────────────
-  // Etapas fixas da Portaria 638/2026, com prazos em dias
-  var etapasPadrao = [
-    { ord: 1, etapa: 'Designação da equipe de planejamento',     prazo: 5,   fase: 'Interna', agente: setor },
-    { ord: 2, etapa: 'ETP + Mapa de Riscos + Pesquisa de Preços', prazo: 45, fase: 'Interna', agente: setor },
-    { ord: 3, etapa: 'Minuta do TR',                              prazo: 10, fase: 'Interna', agente: setor },
-    { ord: 4, etapa: 'IRP (se SRP)',                               prazo: 15, fase: 'Interna', agente: setor },
-    { ord: 5, etapa: 'Adequações finais',                          prazo: 10, fase: 'Interna', agente: setor },
-    { ord: 6, etapa: 'Versão final do TR',                         prazo: 10, fase: 'Interna', agente: setor },
-    { ord: 7, etapa: 'Envio ao SEL',                               prazo: 3,  fase: 'Interna', agente: setor },
-    { ord: 8, etapa: 'Fase Externa (' + modalidade + ')',          prazo: faseExternaDias(modalidade), fase: 'Externa', agente: 'SEL/SEPMA' }
-  ];
+  // Formata a célula D0 como data pura (sem hora)
+  var d0ColIdx = hProc.indexOf('D0 (Data Abertura)');
+  if (d0ColIdx >= 0) {
+    wsProc.getRange(procRowSheet, d0ColIdx + 1).setNumberFormat('DD/MM/YYYY');
+  }
 
-  // Se não tem IRP, marca a etapa 4 como "Não se aplica"
-  var statusIRP = temIRP === 'Sim' ? 'Não iniciada' : 'Não se aplica';
-
-  // Detecta cabeçalho da aba Etapas
+  // ── Localiza o próximo bloco vazio na aba Etapas ─────────────────────
+  // A aba tem 100 blocos pré-formatados de 10 linhas cada:
+  //   1 separador  (col Ord. vazia, col ProcessoID vazia = bloco livre)
+  //   9 etapas     (Ord. 1..9, ProcessoID vazio = ainda não usado)
+  //
+  // Todo o visual (bordas, fonte Arial 11, cores, formatação condicional)
+  // já está na planilha. O código só precisa preencher os valores:
+  //   • Nome do objeto no separador (col A, já mesclada)
+  //   • ProcessoID nas 9 linhas de etapa
+  //   • Etapa 4 (IRP) → "Não se aplica" quando temIRP = Não
+  //   • Etapa 8 (Fase externa) → nome e prazo conforme modalidade
+  // Lê o cabeçalho da aba Etapas via getDataRange() (cabeçalho sempre tem conteúdo)
   var dadosEtap = wsEtapas.getDataRange().getValues();
   var hEtapIdx = -1;
   for (var hj = 0; hj < dadosEtap.length; hj++) {
     if (dadosEtap[hj].join('|').indexOf('ProcessoID') >= 0) { hEtapIdx = hj; break; }
   }
   if (hEtapIdx < 0) { ui.alert('Cabeçalho "ProcessoID" não encontrado na aba Etapas.'); return; }
-  var hEtap = dadosEtap[hEtapIdx].map(function(h){ return String(h).trim(); });
+  var hEtap    = dadosEtap[hEtapIdx].map(function(h){ return String(h).trim(); });
+  var colProcE = hEtap.indexOf('ProcessoID');
+  var colOrdE  = hEtap.indexOf('Ord.');
+  var colEtapE = hEtap.indexOf('Etapa');
+  var colPrazE = hEtap.indexOf('Prazo (dias)');
+  var colStatE = hEtap.indexOf('StatusEtapa ◄ EDITAR');
 
-  // ── Insere linha separadora visual (mesmo padrão da planilha) ────────
-  // Formato: "  N° SUAP: 23040.001002/2026-01   |   Descrição do objeto"
-  // A coluna A tem o texto, demais colunas ficam vazias.
-  // O getDados() já ignora essas linhas (coluna B vazia = separador).
-  var textoSeparador = '  N° SUAP: ' + (suap || '—') + '   |   ' + objeto;
-  var linhaSeparadora = hEtap.map(function(col, idx) {
-    return idx === 0 ? textoSeparador : '';
-  });
-  wsEtapas.appendRow(linhaSeparadora);
-
-  // Aplica formatação visual na linha separadora (fundo cinza, negrito)
-  var ultimaLinha = wsEtapas.getLastRow();
-  var rangeSep = wsEtapas.getRange(ultimaLinha, 1, 1, hEtap.length);
-  rangeSep.setBackground('#E8F0FE');
-  rangeSep.setFontWeight('bold');
-  rangeSep.setFontSize(10);
-  rangeSep.setFontColor('#1F3864');
-  wsEtapas.getRange(ultimaLinha, 1, 1, 1).merge();
-
-  // ── Insere as 8 etapas padrão ─────────────────────────────────────────
-  var linhasEtapas = etapasPadrao.map(function(ep) {
-    return hEtap.map(function(col) {
-      switch(col) {
-        case 'ProcessoID':                return pid;
-        case 'Ord.':                      return ep.ord;
-        case 'Etapa':                     return ep.etapa;
-        case 'Prazo (dias)':              return ep.prazo;
-        case 'DataRealizacao◄ EDITAR':    return new Date();  // data de hoje — já abre calendário no 1º clique
-        case 'AtrasoRealDias ◄ EDITAR':   return 0;   // coluna legada — mantida para compatibilidade
-        case 'MotivoAtraso ◄ EDITAR':     return '';
-        case 'StatusEtapa ◄ EDITAR':      return ep.ord === 4 ? statusIRP : 'Não iniciada';
-        case 'Agente Responsável':        return ep.agente;
-        case 'Fase':                      return ep.fase;
-        default:                          return '';
-      }
-    });
-  });
-
-  // ── Localiza a coluna StatusEtapa para aplicar formatação condicional ──
-  // As regras de formatação condicional da planilha não se propagam
-  // automaticamente para linhas novas. Por isso, replicamos as cores
-  // programaticamente com setBackground() em cada linha inserida.
-  var colStatusIdx = hEtap.indexOf('StatusEtapa ◄ EDITAR');
-  // Mapa de cores por status (deve espelhar as regras da planilha)
-  var COR_STATUS = {
-    'Não iniciada':          { bg: '#E8EAED', fg: '#3C4043' },   // cinza claro
-    'Em andamento':          { bg: '#E6F4EA', fg: '#1E6E42' },   // verde claro
-    'Concluída':             { bg: '#D2E3FC', fg: '#1A4D8C' },   // azul claro
-    'Aguardando requisitante':{ bg: '#FDE8D8', fg: '#8C3D0F' },  // laranja claro
-    'Paralisado':            { bg: '#EDD9F5', fg: '#5D2080' },   // roxo claro
-    'Não se aplica':         { bg: '#F8F9FA', fg: '#9AA0A6' }    // cinza muito claro
-  };
-
-  // Índice da coluna DataRealizacao (para aplicar formato de data)
-  var colDataRealizIdx = hEtap.indexOf('DataRealizacao◄ EDITAR');
-
-  // Adiciona as linhas de etapas à aba e aplica formatação visual
-  linhasEtapas.forEach(function(linha) {
-    wsEtapas.appendRow(linha);
-    var ultimaLinhaEtapa = wsEtapas.getLastRow();
-    var rangeEtapa = wsEtapas.getRange(ultimaLinhaEtapa, 1, 1, hEtap.length);
-
-    // Estilo base: fonte padrão para todas as colunas da etapa
-    rangeEtapa.setFontSize(10);
-    rangeEtapa.setFontWeight('normal');
-
-    // Formata a célula DataRealizacao como data DD/MM/AAAA
-    // Isso garante que o valor Date() apareça legível e que o
-    // calendário abra no primeiro clique ao editar a célula.
-    if (colDataRealizIdx >= 0) {
-      wsEtapas.getRange(ultimaLinhaEtapa, colDataRealizIdx + 1)
-        .setNumberFormat('DD/MM/YYYY');
-    }
-
-    // Cor de fundo + cor do texto baseada no StatusEtapa
-    if (colStatusIdx >= 0) {
-      var statusVal = linha[colStatusIdx];
-      var cor = COR_STATUS[statusVal];
-      if (cor) {
-        rangeEtapa.setBackground(cor.bg);
-        rangeEtapa.setFontColor(cor.fg);
+  // Procura o primeiro separador livre: Ord. e ProcessoID ambos vazios.
+  // getDataRange() não inclui linhas pré-formatadas sem valores, então
+  // lemos um bloco explícito de até 1100 linhas (100 blocos × 10 + folga).
+  var primeiraLinhaEtap = hEtapIdx + 2;                     // 1ª linha de dados (1-based)
+  var nColsEtap         = hEtap.length;
+  var limiteEtap        = Math.min(wsEtapas.getMaxRows() - primeiraLinhaEtap + 1, 1100);
+  var sepRowSheet = -1;
+  if (limiteEtap > 0) {
+    var blocoEtap = wsEtapas.getRange(primeiraLinhaEtap, 1, limiteEtap, nColsEtap).getValues();
+    for (var ri = 0; ri < blocoEtap.length; ri++) {
+      var ordVal = String(blocoEtap[ri][colOrdE]  || '').trim();
+      var pidVal = String(blocoEtap[ri][colProcE] || '').trim();
+      if (ordVal === '' && pidVal === '') {
+        sepRowSheet = primeiraLinhaEtap + ri;                // linha real na planilha (1-based)
+        break;
       }
     }
-  });
+  }
+  if (sepRowSheet < 0) {
+    ui.alert('Não há blocos disponíveis na aba Etapas.\nTodos os 100 espaços pré-formatados foram utilizados.');
+    return;
+  }
+
+  // Grava o nome do objeto no separador (col A, já está mesclada)
+  wsEtapas.getRange(sepRowSheet, 1).setValue(objeto);
+
+  // Preenche ProcessoID nas 9 linhas de etapa abaixo do separador
+  wsEtapas.getRange(sepRowSheet + 1, colProcE + 1, 9, 1).setValue(pid);
+
+  // Etapa 4 — IRP: marca "Não se aplica" quando o processo não tem IRP
+  if (temIRP !== 'Sim' && colStatE >= 0) {
+    wsEtapas.getRange(sepRowSheet + 4, colStatE + 1).setValue('Não se aplica');
+  }
+
+  // Etapa 8 — Fase externa: ajusta nome e prazo conforme modalidade
+  // (o bloco pré-formatado assume Pregão Eletrônico como padrão)
+  if (modalidade !== 'Pregão Eletrônico') {
+    var faseNome  = 'Fase externa — ' + modalidade;
+    var fasePrazo = faseExternaDias(modalidade);
+    if (colEtapE >= 0) wsEtapas.getRange(sepRowSheet + 8, colEtapE + 1).setValue(faseNome);
+    if (colPrazE >= 0) wsEtapas.getRange(sepRowSheet + 8, colPrazE + 1).setValue(fasePrazo);
+  }
+
+  SpreadsheetApp.flush(); // confirma todas as escritas antes de seguir
 
   // Invalida o cache para que o painel reflita o novo processo
   invalidarCache();
 
   ui.alert('Processo "' + pid + '" criado com sucesso!\n\n' +
-           '• ProcessoID gerado automaticamente: ' + pid + '\n' +
-           '• 1 linha adicionada na aba Processos\n' +
-           '• ' + etapasPadrao.length + ' etapas adicionadas na aba Etapas\n\n' +
-           'IMPORTANTE: o "Agente Responsável" das etapas ficou como "A definir".\n' +
-           'Edite manualmente na aba Etapas conforme o setor de cada etapa.\n\n' +
-           'O painel já vai exibir o novo processo na próxima atualização.');
+           '• ProcessoID: ' + pid + '\n' +
+           '• Bloco pré-formatado preenchido na aba Etapas\n' +
+           (temIRP !== 'Sim' ? '• Etapa 4 (IRP) marcada como Não se aplica\n' : '• IRP incluída como etapa 4\n') +
+           (modalidade !== 'Pregão Eletrônico' ? '• Fase externa ajustada para ' + modalidade + '\n' : '') +
+           '\nO painel já vai exibir o novo processo na próxima atualização.');
 }
 
 // Helper: retorna os dias da fase externa por modalidade

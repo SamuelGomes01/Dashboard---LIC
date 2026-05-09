@@ -1,5 +1,190 @@
 # Plano de Trabalho — Dashboard Cronograma de Contratações CPII
-> Atualizado em: 02/05/2026 (noite) — erros corrigidos, cálculos auditados, sistema pronto para apresentação em 05/05. Próximo passo: Nota Técnica para RSC.
+> Atualizado em: 08/05/2026 (tarde) — fix KPI Andamento + plano de automação de capacidade aprovado.
+
+---
+
+## 📌 SESSÃO 08/05/2026 (tarde) — Fix KPI + Planejamento de Automação [AGUARDA REPUBLICAÇÃO]
+
+### ✅ IMPLEMENTADO NESTA SESSÃO (`AppsScript_index.html`)
+
+**Fix KPI "Em Andamento" com filtro Atrasado ativo:**
+- Quando `activeStatus === 'atrasado'`, o KPI "Em Andamento" agora exibe `——` em vez do número (contextos mutuamente exclusivos).
+- Linha 1791 do `index.html`. Só `index.html` foi alterado — `Codigo.gs` não foi tocado.
+
+### ⚠ AÇÕES NECESSÁRIAS PARA PUBLICAR
+- Colar `AppsScript_index.html` atualizado no GAS e salvar
+- Implantar → Nova versão
+
+---
+
+### 📋 PLANO APROVADO — Automação de Capacidade (próximas sessões)
+
+**Fase 1 — Samuel faz 1x na planilha (antes de codar):**
+1. Na aba `📊 Capacidade`, no bloco "REGISTRO DE PROCESSOS ATIVOS": inserir coluna `ProcessoID` como primeira coluna (antes de "Servidor ◄ EDITAR").
+2. No bloco "RESUMO POR SERVIDOR": trocar as fórmulas de soma da coluna "Processos (soma)" de `=SUM(range)` para `=SUMIF(colProcessoID_do_registro, "NOME_SERVIDOR", colTotal_do_registro)` — uma por linha de servidor.
+   - Exemplo para AMANDA: `=SUMIF($A$14:$A$200,"AMANDA",$G$14:$G$200)` (ajustar colunas conforme a posição real após inserir ProcessoID).
+3. Confirmar que as fórmulas somam corretamente antes de chamar o código.
+
+**Fase 2 — `novoProcesso()` ampliado (`Codigo.gs`):**
+- Perguntar: Responsável Fase Interna (lista: Amanda/Beatriz/Bruno/Samuel)
+- Perguntar: Responsável Fase Externa (lista sem o mesmo da interna — segregação de funções, Lei 14.133/2021)
+- Perguntar: Natureza do Objeto (Comum=0 / TIC=+1 / Especiais=+2 / MO Dedicada=+3 / Obras=+3)
+- Perguntar: Itens IRP (só se temIRP=Sim → Até 10=+0,5 / Até 25=+1 / Até 50=+1,5 / 100+=+2)
+- Calcular pontos automaticamente pela Matriz de Complexidade
+- Inserir 2 linhas na Capacidade: uma para resp. fase interna (Fase Interna), outra para resp. fase externa (Fase Externa), com ProcessoID na nova coluna
+- Preencher `Agente Responsável` nas etapas 1–7 (resp. interno) e etapa 8 (resp. externo) na aba Etapas
+
+**Fase 3 — `concluirProcesso()` nova função (`Codigo.gs`):**
+- Acessível via menu SEL → Concluir Processo
+- Pede o ProcessoID (ou detecta automaticamente processos com todas as etapas = Concluída)
+- Localiza linhas com aquele ProcessoID na coluna A do registro de Capacidade
+- Apaga essas linhas → SUMIF cai automaticamente no resumo → painel atualiza
+- Invalida cache após a operação
+
+**Regras de negócio a respeitar:**
+- Segregação de funções: responsável fase interna ≠ responsável fase externa (obrigatório)
+- Pontuação base: Dispensa=1, Inexigibilidade=2, Pregão/Concorrência=3
+- Sessão fase externa: sem sessão=0, Dispensa eletrônica=+1, Pregão/Concorrência=+2
+- Natureza: Comum=0, TIC=+1, Especiais=+2, MO Dedicada=+3, Obras=+3
+- IRP (só quando temIRP=Sim): ≤10=+0,5 / ≤25=+1 / ≤50=+1,5 / ≥100=+2
+
+---
+
+## 📌 SESSÃO 08/05/2026 (manhã) — Correções de KPI + Filtros [AGUARDA REPUBLICAÇÃO]
+
+### ✅ IMPLEMENTADO NESTA SESSÃO (`AppsScript_index.html`)
+
+Todos os ajustes foram no `index.html`, nas funções `updateKPIs()` e `applyFilters()`. O `Codigo.gs` não foi alterado.
+
+**`updateKPIs()` — regras redefinidas:**
+
+1. **KPI "Total de Processos"** — passa a excluir processos na fila (`status === 'planejamento'`). Fórmula: andamento + atrasados ativos + concluídos. Quando um filtro de status está ativo (`activeStatus` preenchido), exibe `——` no lugar do número (o total perde sentido contextual ao filtrar por categoria).
+2. **KPI "Em Andamento"** — passa a incluir processos `atrasado` com `execucao < 100`. Processos `atrasado && execucao === 100` **não** entram mais neste KPI.
+3. **KPI "Atrasados"** — exibe apenas `atrasado && execucao < 100`. Processos concluídos com histórico de atraso são excluídos — aparecem exclusivamente no KPI "Concluídos".
+4. **Traço `——` para KPIs zerados** — função auxiliar `kpiVal(n)` adicionada: retorna o número se `n > 0`, ou `'——'` se `n === 0`. Aplicada em todos os cinco KPIs.
+
+**`applyFilters()` — lógica de `matchS` redefinida:**
+
+| Botão | Comportamento anterior | Novo comportamento |
+|---|---|---|
+| **Todos** | todos os processos (inclusive fila) | exclui `planejamento` — mostra andamento + atrasados + concluídos |
+| **Andamento** | só `andamento` | `andamento \|\| aguardando \|\| paralisado \|\| (atrasado && execucao < 100)` |
+| **Atrasado** | todos com `status === 'atrasado'` | só `atrasado && execucao < 100` |
+| **A iniciar** | sem alteração | sem alteração |
+| **Concluídos** | sem alteração | sem alteração |
+
+**Arquivo afetado:** `AppsScript_index.html` apenas.
+
+### ⚠ AÇÕES NECESSÁRIAS PARA PUBLICAR
+- Colar `AppsScript_index.html` atualizado no GAS e salvar
+- Implantar → Nova versão
+
+---
+
+## 📌 SESSÃO 06/05/2026 — Ramais + renomear status + KPI + novoProcesso() [AGUARDA REPUBLICAÇÃO | TESTADO ✅]
+
+### ✅ IMPLEMENTADO NESTA SESSÃO (`AppsScript_index.html` + `AppsScript_Codigo.gs`)
+
+**`AppsScript_Codigo.gs` — novoProcesso() (melhorias desta sessão):**
+1. **Prompt Link SUAP** — pergunta a URL após o IRP. Gravada na coluna `Link SUAP`.
+2. **D0 sem hora** — `setNumberFormat('DD/MM/YYYY')` na célula D0 após gravar.
+3. **Arquitetura de blocos pré-formatados (mudança principal):** Samuel pré-formatou a aba Etapas com 100 blocos de 10 linhas (1 separador mesclado azul + 9 etapas com bordas/Arial 11/formatação condicional cobrindo todo o range até a linha ~985). O `novoProcesso()` foi reescrito para localizar o primeiro bloco livre (separador com ProcessoID e Ord. vazios) e preencher apenas: (a) nome do objeto no separador, (b) ProcessoID nas 9 etapas, (c) StatusEtapa da etapa 4 (IRP) = "Não se aplica" se temIRP=Não, (d) nome e prazo da etapa 8 quando não for Pregão Eletrônico. O código não cria linhas, não seta cores, não expande formatação condicional. Aba Processos também usa `setValues()` na primeira linha vazia em vez de `appendRow()`.
+4. **Fix crítico — `getDataRange()` é cego a linhas pré-formatadas:** linhas com apenas estilos (bordas, fontes, FC) mas sem valores não são retornadas por `getDataRange().getValues()`. Solução: substituir por `wsProc.getRange(primeiraLinhaProc, 1, 150, nColsProc).getValues()` (Processos) e `wsEtapas.getRange(primeiraLinhaEtap, 1, 1100, nColsEtap).getValues()` (Etapas) — leitura explícita de range fixo grande, que enxerga todas as linhas pré-formatadas vazias.
+5. **getDados() não precisou ser alterado** — `if (!rowE[0]) continue;` já pula etapas com ProcessoID vazio, blocos livres são invisíveis para o painel automaticamente.
+
+**Teste confirmatório:** SEL-2026-020 criado com sucesso em ambas as abas — formatação condicional aplicada corretamente, D0 sem hora, separador azul com nome do objeto. Samuel confirmou: "excelente meu amigo. acho que deu bom". ✅
+
+**`AppsScript_index.html`:**
+
+1. **Ramais reais do SEL** — footer atualizado: `2123-4001/4002/4003` → `2163-5762 / 2163-5718 / 2163-5763`
+
+2. **"Em planejamento" renomeado para "A iniciar - Fila de Prioridade"** em todo o frontend:
+   - KPI card label: `Em Planejamento` → `Fila de Prioridade`
+   - KPI subtítulo: `fase interna não iniciada` → `fase interna a iniciar`
+   - Botão de filtro: `Planejamento` → `A iniciar` (atributo `data-s="planejamento"` mantido — chave interna não muda)
+   - `STATUS_LABEL['planejamento']`: `'Em planejamento'` → `'A iniciar - Fila de Prioridade'` (tooltip)
+
+3. **Bug de KPI corrigido — total não fechava (19 ≠ 2+9+6=17):**
+   - Causa: processos com status `'aguardando'` e `'paralisado'` somavam no total mas não entravam em nenhum KPI de linha.
+   - Correção: `kv-and` (Em andamento) agora conta `andamento || aguardando || paralisado`. Total sempre fecha: and + atra + plan + conc = total.
+
+### ⚠ AÇÕES NECESSÁRIAS PARA PUBLICAR
+- Colar `AppsScript_Codigo.gs` atualizado no GAS e salvar
+- Colar `AppsScript_index.html` atualizado no GAS e salvar
+- Implantar → Nova versão
+- **Excluir o processo de teste SEL-2026-020** da aba Processos e suas etapas da aba Etapas (foi criado para teste)
+
+---
+
+## 📌 SESSÃO 05/05/2026 (tarde) — Diagnóstico + correção de bugs no novoProcesso()
+
+### 🔍 PROBLEMAS IDENTIFICADOS NA PLANILHA
+
+1. **DataRealizacao incorreta — SEL-2026-014 etapa 1 "Designação da equipe":**
+   - Valor atual: `26/05/2025` — mas o D0 do processo é `11/07/2025`
+   - A data está ANTES do início do processo → o sistema calcula atraso negativo → **o atraso não aparece no painel**
+   - **Solução (Samuel):** abrir a aba 🗓 Etapas, localizar SEL-2026-014 etapa 1, corrigir a `DataRealizacao◄ EDITAR` para a data real de conclusão (em torno de ago/set/out 2025, ~35 dias úteis após 18/07/2025 — Samuel confirma a data exata)
+
+2. **Linhas fantasmas na aba Processos:**
+   - Linhas 23 e 24 têm espaços na coluna C (Objeto) com fundo cinza — resquício de uma tentativa falha do `novoProcesso()`
+   - Essas linhas não aparecem como processos reais, mas poluem a aba
+   - **Solução (Samuel):** selecionar as linhas 23 e 24 inteiras na aba 🏛 Processos → clique direito → Excluir linhas
+
+3. **Formatação branca nas etapas dos processos SEL-2026-016 a 019:**
+   - As linhas de etapas ficaram com fundo branco em vez das cores de status (cinza para "Não iniciada", azul para "Concluída" etc.)
+   - Ocorre porque a regra de formatação condicional do Sheets só cobre o range original e não se expande automaticamente
+   - **Solução (Samuel):** Formatar → Formatação condicional → editar cada regra existente e expandir o range até a linha atual (ex: até linha 250 para folga)
+
+### ✅ CORRIGIDO NO CODIGO.GS (4 bugs em novoProcesso())
+
+1. **Nomes incorretos das etapas** — agora batem com o padrão da planilha:
+   - `'Designação da equipe de planejamento'` → `'Designação da equipe'`
+   - `'Minuta do TR'` → `'Minuta do Termo de Referência'`
+   - `'IRP (se SRP)'` → `'IRP — Intenção de Registro de Preços'`
+   - `'Envio ao SEL'` → `'Envio ao SEL/SEPMA'`
+   - `'Fase Externa (...)'` → `'Fase externa — ...'` (minúsculo, com travessão)
+
+2. **DataRealizacao = `new Date()` em etapas não iniciadas** → corrigido para `''` (vazio). Antes, inserir data de hoje em todas as etapas fazia o cascateamento calcular como se todas já tivessem sido concluídas em 05/05/2026, distorcendo todos os prazos do processo novo.
+
+3. **IRP incluída mesmo quando `temIRP = Não`** → corrigido. Agora a etapa IRP só é criada quando `temIRP = 'Sim'`. Sem IRP: 8 etapas. Com IRP: 9 etapas.
+
+4. **Etapa "Assinatura contrato / Ata (ARP)" faltando** → adicionada ao final de todo processo, sempre com status "Não se aplica" (fora do escopo do SEL).
+
+### ✅ IMPLEMENTADO NO CODIGO.GS (sessão 05/05 tarde)
+
+Itens 1–4 acima corrigidos no `AppsScript_Codigo.gs`. Samuel colou e reimplantou. ✅
+
+### ⚠ AÇÕES PENDENTES NA PLANILHA (Samuel)
+
+1. Corrigir `DataRealizacao◄ EDITAR` da etapa 1 do SEL-2026-014 (data real de conclusão da Designação da equipe — em torno de ago/set/out 2025)
+2. Deletar linhas 23-24 da aba 🏛 Processos (linhas fantasmas com espaços)
+3. Expandir regras de formatação condicional da aba 🗓 Etapas para cobrir novas linhas (Formatar → Formatação condicional → ampliar range)
+
+---
+
+## 📌 SESSÃO 05/05/2026 (tarde — continuação) — Otimização de performance + separador
+
+### ✅ IMPLEMENTADO
+
+1. **`novoProcesso()` reescrito com escrita em lote (`AppsScript_Codigo.gs`):**
+   - Substituídas ~70 chamadas individuais (`appendRow` + `setBackground` + `setFontColor` por linha) por 3 chamadas em lote: `setValues()`, `setBackgrounds()`, `setFontColors()` no bloco inteiro de uma vez
+   - Adicionado `SpreadsheetApp.flush()` ao final para confirmar escritas
+   - Resultado: de ~6s por processo para <1s — cadastrar 4–5 processos seguidos sem estourar o limite de 6 min
+
+2. **Separador da aba Etapas corrigido (`novoProcesso()`):**
+   - Texto: removido prefixo `"N° SUAP: xxx |"` → exibe apenas o nome do objeto
+   - Alinhamento: centralizado horizontalmente
+   - Mesclagem: de `A1` (coluna única, invisível quando A oculta) → `A1:I1` (todas as colunas) — texto aparece mesmo com coluna A (ProcessoID) oculta. Detecção de separador no `getDados()` continua funcionando (células mescladas retornam vazio nas colunas secundárias)
+
+3. **Dica de planilha:** para células que precisam exibir `+2`, `+3` etc. sem virar fórmula — usar apóstrofo antes (`'+2`) ou formatar a coluna como Texto simples (Formatar → Número → Texto simples)
+
+### 📅 PRÓXIMOS PASSOS
+
+- Samuel testando `novoProcesso()` após reimplantação
+- Pendências na planilha listadas acima
+- Próxima tarefa: Nota Técnica para RSC
+
+---
 
 ---
 
