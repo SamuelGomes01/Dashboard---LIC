@@ -43,6 +43,14 @@
 // dois lugares se um dia precisar mudar — ex: 2028 em diante).
 var ANO_BASE = 2026;
 
+// Servidores ativos usados na automacao de capacidade. IGOR fica fora por
+// ter saido do setor; processos antigos que dependerem dele ficam para revisao.
+var CAP_SERVIDORES_ATIVOS = ['AMANDA', 'BEATRIZ', 'BRUNO', 'SAMUEL'];
+// Linha do cabecalho do REGISTRO de processos (nao do resumo por servidor).
+// Na nova estrutura: linha 14 = cabecalho, linha 15 = aviso, linha 16+ = dados.
+var CAP_HEADER_ROW_FALLBACK = 14;
+var CAP_DATA_START_ROW_FALLBACK = 16;
+
 
 // ════════════════════════════════════════════════════════════════════════
 // MENU CUSTOMIZADO — aparece na barra da planilha ao abrir
@@ -58,15 +66,13 @@ function onOpen() {
     .addItem('🌐 Abrir Painel (dashboard)', 'abrirPainel')
     .addItem('➕ Novo Processo', 'novoProcesso')
     .addSeparator()
-    .addSubMenu(ui.createMenu('⏰ Trigger Diário')
-      .addItem('Instalar (atualiza todo dia às 5h)', 'instalarTriggerDiario')
-      .addItem('Desinstalar', 'desinstalarTriggerDiario'))
+    .addSubMenu(ui.createMenu('📊 Capacidade')
+      .addItem('Sincronizar capacidade', 'sincronizarCapacidade')
+      .addItem('Concluir processo', 'concluirProcesso'))
     .addSeparator()
     .addSubMenu(ui.createMenu('🔔 Detector de Atraso')
       .addItem('Instalar (avisa ao preencher DataRealizacao)', 'instalarTriggerOnEdit')
       .addItem('Desinstalar', 'desinstalarTriggerOnEdit'))
-    .addSeparator()
-    .addItem('📅 Preencher datas vazias com hoje', 'preencherDataRealizacaoHoje')
     .addToUi();
 
   // Garante que a coluna DataRealizacao exiba datas no formato DD/MM/YYYY
@@ -470,7 +476,9 @@ function getDados() {
 // Chamada pelo botão "Atualizar" do painel ou pelo menu da planilha.
 // Remove o cache forçando a próxima chamada de getDados() a reler a planilha.
 function invalidarCache() {
-  CacheService.getScriptCache().remove('dados_painel');
+  var cache = CacheService.getScriptCache();
+  cache.remove('dados_painel');
+  cache.remove('dados_capacidade');
   return { ok: true };
 }
 
@@ -699,10 +707,10 @@ function novoProcesso() {
   if (objResp.getSelectedButton() !== ui.Button.OK) return;
   var objeto = objResp.getResponseText().trim();
 
-  var modalResp = ui.prompt('Novo Processo', 'Modalidade:\n1 = Pregão Eletrônico\n2 = Contratação Direta\n3 = Concorrência\n\nDigite 1, 2 ou 3:', ui.ButtonSet.OK_CANCEL);
+  var modalResp = ui.prompt('Novo Processo', 'Modalidade:\n1 = Dispensa Eletrônica\n2 = Inexigibilidade\n3 = Pregão Eletrônico\n4 = Concorrência\n\nDigite 1, 2, 3 ou 4:', ui.ButtonSet.OK_CANCEL);
   if (modalResp.getSelectedButton() !== ui.Button.OK) return;
   var modalNum = modalResp.getResponseText().trim();
-  var modalidades = { '1': 'Pregão Eletrônico', '2': 'Contratação Direta', '3': 'Concorrência' };
+  var modalidades = { '1': 'Dispensa Eletrônica', '2': 'Inexigibilidade', '3': 'Pregão Eletrônico', '4': 'Concorrência' };
   var modalidade = modalidades[modalNum] || 'Pregão Eletrônico';
 
   var d0Resp = ui.prompt('Novo Processo', 'Data de abertura D0 (DD/MM/AAAA):', ui.ButtonSet.OK_CANCEL);
@@ -719,9 +727,76 @@ function novoProcesso() {
   if (linkResp.getSelectedButton() !== ui.Button.OK) return;
   var linkSuap = linkResp.getResponseText().trim();
 
-  // Setor fica "A definir" — a equipe preenche depois na planilha
-  // (pode variar por etapa, então não faz sentido perguntar uma vez só)
-  var setor = 'A definir';
+  var ehPregao = capIsPregao_(modalidade);
+  var respInterno = capPromptServidor_(ui, 'Responsavel', ehPregao ? 'Responsavel pela fase interna:' : 'Responsavel unico pelo processo:');
+  if (!respInterno) return;
+  var respExterno = 'N/A';
+  if (ehPregao) {
+    respExterno = capPromptServidor_(ui, 'Responsavel', 'Responsavel pela fase externa (diferente da fase interna):');
+    if (!respExterno) return;
+    if (respExterno === respInterno) {
+      ui.alert('No Pregao, o responsavel interno e o externo precisam ser diferentes.');
+      return;
+    }
+  }
+
+  var naturezaOpt = capPromptNumero_(ui, 'Natureza do objeto', 'Escolha a natureza do objeto:\n1 = Comum\n2 = TIC\n3 = Especial\n4 = Mao de Obra Dedicada\n5 = Obras/Engenharia\n6 = Processo compartilhado', {
+    '1': { label: 'Comum', pts: 0 },
+    '2': { label: 'TIC', pts: 1 },
+    '3': { label: 'Especial', pts: 2 },
+    '4': { label: 'Mao de Obra Dedicada', pts: 3 },
+    '5': { label: 'Obras/Engenharia', pts: 3 },
+    '6': { label: 'Processo compartilhado', pts: 1 }
+  }, { label: 'Comum', pts: 0 });
+  if (!naturezaOpt) return;
+
+  var irpPts = 0;
+  var irpLabel = 'Sem IRP';
+  if (temIRP === 'Sim') {
+    var irpOpt = capPromptNumero_(ui, 'IRP', 'Quantidade de itens da IRP:\n1 = Ate 10 itens\n2 = Ate 25 itens\n3 = Ate 50 itens\n4 = 100 itens ou mais', {
+      '1': { label: 'IRP ate 10 itens', pts: 0.5 },
+      '2': { label: 'IRP ate 25 itens', pts: 1 },
+      '3': { label: 'IRP ate 50 itens', pts: 1.5 },
+      '4': { label: 'IRP 100+ itens', pts: 2 }
+    }, { label: 'IRP ate 10 itens', pts: 0.5 });
+    if (!irpOpt) return;
+    irpPts = irpOpt.pts;
+    irpLabel = irpOpt.label;
+  }
+
+  var sessaoOpt = ehPregao
+    ? { label: 'Sessao de Pregao/Concorrencia', pts: 2 }
+    : capPromptNumero_(ui, 'Sessao externa', 'Tipo de sessao da fase externa:\n1 = Sem sessao publica\n2 = Sessao de Dispensa Eletronica', {
+        '1': { label: 'Sem sessao publica', pts: 0 },
+        '2': { label: 'Sessao de Dispensa Eletronica', pts: 1 }
+      }, { label: 'Sem sessao publica', pts: 0 });
+  if (!sessaoOpt) return;
+
+  // Natureza na fase externa (Pregao/Concorrencia): afeta analise de propostas/habilitacao
+  // Comum=0, Especial=+1, Mao de Obra Dedicada=+2
+  var natExternaOpt = { label: 'Comum', pts: 0 };
+  if (ehPregao || capNorm_(modalidade).indexOf('CONCORR') >= 0) {
+    natExternaOpt = capPromptNumero_(ui, 'Natureza fase externa', 'Natureza do objeto na fase externa:\n1 = Comum (bens/servicos padrao)\n2 = Especial (analise mais critica de propostas)\n3 = Mao de Obra Dedicada (planilhas trabalhistas + habilitacao)', {
+      '1': { label: 'Comum', pts: 0 },
+      '2': { label: 'Especial', pts: 1 },
+      '3': { label: 'Mao de Obra Dedicada', pts: 2 }
+    }, { label: 'Comum', pts: 0 });
+    if (!natExternaOpt) return;
+  }
+
+  // Grupos de itens (Pregao/Concorrencia com SRP): afeta volume de analise por grupo
+  // Ate 4 grupos=+1, 5 ou mais grupos=+2; sem grupos=0
+  var gruposOpt = { label: 'Sem grupos', pts: 0 };
+  if (ehPregao || capNorm_(modalidade).indexOf('CONCORR') >= 0) {
+    gruposOpt = capPromptNumero_(ui, 'Grupos de itens', 'Quantidade de grupos do certame (SRP):\n0 = Sem grupos (item unico ou nao se aplica)\n1 = Ate 4 grupos\n2 = 5 grupos ou mais', {
+      '0': { label: 'Sem grupos', pts: 0 },
+      '1': { label: 'Ate 4 grupos', pts: 1 },
+      '2': { label: '5 grupos ou mais', pts: 2 }
+    }, { label: 'Sem grupos', pts: 0 });
+    if (!gruposOpt) return;
+  }
+
+  var setor = respInterno;
 
   // ── Localiza as abas ─────────────────────────────────────────────────
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -826,6 +901,7 @@ function novoProcesso() {
   var colProcE = hEtap.indexOf('ProcessoID');
   var colOrdE  = hEtap.indexOf('Ord.');
   var colEtapE = hEtap.indexOf('Etapa');
+  var colAgenteE = hEtap.indexOf('Agente Responsável');
   var colPrazE = hEtap.indexOf('Prazo (dias)');
   var colStatE = hEtap.indexOf('StatusEtapa ◄ EDITAR');
 
@@ -858,6 +934,13 @@ function novoProcesso() {
   // Preenche ProcessoID nas 9 linhas de etapa abaixo do separador
   wsEtapas.getRange(sepRowSheet + 1, colProcE + 1, 9, 1).setValue(pid);
 
+  // Preenche responsaveis nas etapas: 1-7 fase interna, 8 fase externa,
+  // 9 contratual fica como esta no modelo.
+  if (colAgenteE >= 0) {
+    wsEtapas.getRange(sepRowSheet + 1, colAgenteE + 1, 7, 1).setValue(respInterno);
+    wsEtapas.getRange(sepRowSheet + 8, colAgenteE + 1).setValue(ehPregao ? respExterno : respInterno);
+  }
+
   // Etapa 4 — IRP: marca "Não se aplica" quando o processo não tem IRP
   if (temIRP !== 'Sim' && colStatE >= 0) {
     wsEtapas.getRange(sepRowSheet + 4, colStatE + 1).setValue('Não se aplica');
@@ -872,6 +955,42 @@ function novoProcesso() {
     if (colPrazE >= 0) wsEtapas.getRange(sepRowSheet + 8, colPrazE + 1).setValue(fasePrazo);
   }
 
+  // Registra a carga inicial na aba Capacidade. Pregao tem linha interna
+  // ativa e externa preparada; demais modalidades usam responsavel unico.
+  var modPts = capModalidadePts_(modalidade);
+  var capItems = [];
+  if (ehPregao) {
+    // Fase interna: modalidade + natureza do objeto + IRP
+    var totalInterno = modPts + naturezaOpt.pts + irpPts;
+    // Fase externa: modalidade + sessao + natureza fase externa + grupos
+    var totalExterno = modPts + sessaoOpt.pts + natExternaOpt.pts + gruposOpt.pts;
+    capItems.push({
+      pid: pid, objeto: objeto, servidor: respInterno, modalidade: modalidade,
+      fase: 'Interna', ativo: 'Sim', modPts: modPts, natPts: naturezaOpt.pts,
+      sessPts: 0, outrosPts: irpPts, total: totalInterno,
+      obs: naturezaOpt.label + '; ' + irpLabel + '. Externo: ' + respExterno,
+      divisao: 'Pregao: fase interna ativa ate conclusao da etapa 7.'
+    });
+    capItems.push({
+      pid: pid, objeto: objeto, servidor: respExterno, modalidade: modalidade,
+      fase: 'Externa', ativo: 'Nao', modPts: modPts, natPts: natExternaOpt.pts,
+      sessPts: sessaoOpt.pts, outrosPts: gruposOpt.pts, total: totalExterno,
+      obs: sessaoOpt.label + '; ' + natExternaOpt.label + '; ' + gruposOpt.label + '. Interno: ' + respInterno,
+      divisao: 'Pregao: esta linha ativa quando a etapa 7 for concluida.'
+    });
+  } else {
+    // Modalidade unica: tudo numa linha so (nao ha segregacao interna/externa)
+    var totalUnico = modPts + naturezaOpt.pts + irpPts + sessaoOpt.pts;
+    capItems.push({
+      pid: pid, objeto: objeto, servidor: respInterno, modalidade: modalidade,
+      fase: 'Unica', ativo: 'Sim', modPts: modPts, natPts: naturezaOpt.pts,
+      sessPts: sessaoOpt.pts, outrosPts: irpPts, total: totalUnico,
+      obs: 'Responsavel externo: N/A. ' + naturezaOpt.label + '; ' + irpLabel + '; ' + sessaoOpt.label + '.',
+      divisao: 'Modalidade sem segundo responsavel separado.'
+    });
+  }
+  var capRows = capAppendRows_(capItems);
+
   SpreadsheetApp.flush(); // confirma todas as escritas antes de seguir
 
   // Invalida o cache para que o painel reflita o novo processo
@@ -880,9 +999,11 @@ function novoProcesso() {
   ui.alert('Processo "' + pid + '" criado com sucesso!\n\n' +
            '• ProcessoID: ' + pid + '\n' +
            '• Bloco pré-formatado preenchido na aba Etapas\n' +
-           (temIRP !== 'Sim' ? '• Etapa 4 (IRP) marcada como Não se aplica\n' : '• IRP incluída como etapa 4\n') +
-           (modalidade !== 'Pregão Eletrônico' ? '• Fase externa ajustada para ' + modalidade + '\n' : '') +
-           '\nO painel já vai exibir o novo processo na próxima atualização.');
+           '• Capacidade: ' + capRows + ' linha(s) registrada(s)\n' +
+           (temIRP !== 'Sim' ? '• Etapa 4 (IRP) marcada como Nao se aplica\n' : '• IRP incluida como etapa 4 (' + irpLabel + ')\n') +
+           (modalidade !== 'Pregao Eletronico' ? '• Fase externa ajustada para ' + modalidade + '\n' : '') +
+           (ehPregao ? '• Fase externa: ' + natExternaOpt.label + '; ' + gruposOpt.label + '\n' : '') +
+           '\nO painel ja vai exibir o novo processo na proxima atualizacao.');
 }
 
 // Helper: retorna os dias da fase externa por modalidade
@@ -890,6 +1011,963 @@ function faseExternaDias(modalidade) {
   if (/direta|dispensa|inexig/i.test(modalidade)) return 30;
   if (/concorrência|concorrencia/i.test(modalidade)) return 100;
   return 90; // Pregão Eletrônico (padrão)
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// AUTOMACAO DE CAPACIDADE
+// ════════════════════════════════════════════════════════════════════════
+
+function capNorm_(s) {
+  return String(s || '').toUpperCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+function capIsServidorAtivo_(nome) {
+  return CAP_SERVIDORES_ATIVOS.indexOf(capNorm_(nome)) >= 0;
+}
+
+function capColLetter_(n) {
+  var s = '';
+  while (n > 0) {
+    var m = (n - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    n = Math.floor((n - m) / 26);
+  }
+  return s;
+}
+
+function capFindSheet_(ss, needle) {
+  var found = null;
+  ss.getSheets().forEach(function(s) {
+    if (capNorm_(s.getName()).indexOf(capNorm_(needle)) >= 0) found = s;
+  });
+  return found;
+}
+
+function capFindHeaderRow_(ws) {
+  // Procura a linha de cabecalho do REGISTRO (nao do resumo).
+  // O registro tem "ProcessoID" + "Servidor" + "Total" na mesma linha.
+  // O bloco de resumo (linha ~5) tem "Servidor" e "Total" mas nao tem "ProcessoID".
+  var max = Math.min(ws.getLastRow(), 40);
+  if (max < 1) return CAP_HEADER_ROW_FALLBACK;
+  var ncols = Math.max(ws.getLastColumn(), 1);
+  var values = ws.getRange(1, 1, max, ncols).getValues();
+  for (var r = 0; r < values.length; r++) {
+    var rowNorm = values[r].map(capNorm_);
+    var rowStr  = rowNorm.join('|');
+    if (rowNorm.indexOf('PROCESSOID') >= 0 &&
+        rowNorm.indexOf('SERVIDOR')   >= 0 &&
+        rowStr.indexOf('TOTAL')       >= 0) {
+      return r + 1;
+    }
+  }
+  return CAP_HEADER_ROW_FALLBACK;
+}
+
+function capFindCol_(header, names) {
+  var wanted = names.map(capNorm_);
+  for (var i = 0; i < header.length; i++) {
+    var h = capNorm_(header[i]);
+    for (var j = 0; j < wanted.length; j++) {
+      if (h === wanted[j]) return i;
+    }
+  }
+  for (var k = 0; k < header.length; k++) {
+    var hk = capNorm_(header[k]);
+    for (var n = 0; n < wanted.length; n++) {
+      if (hk.indexOf(wanted[n]) >= 0) return k;
+    }
+  }
+  return -1;
+}
+
+function capFindColExact_(header, name) {
+  var wanted = capNorm_(name);
+  for (var i = 0; i < header.length; i++) {
+    if (capNorm_(header[i]) === wanted) return i;
+  }
+  return -1;
+}
+
+function capGetInfo_(ws) {
+  var headerRow = capFindHeaderRow_(ws);
+  var lastCol = Math.max(ws.getLastColumn(), 1);
+  var header = ws.getRange(headerRow, 1, 1, lastCol).getValues()[0].map(function(h) {
+    return String(h || '').trim();
+  });
+  // dataStartRow = headerRow + 2 porque a linha imediatamente apos o cabecalho
+  // e um aviso/instrucao (linha 18 na nova estrutura) e nao uma linha de dados.
+  var info = {
+    headerRow: headerRow,
+    dataStartRow: headerRow + 2,
+    header: header,
+    colPid: capFindCol_(header, ['ProcessoID']),
+    colObjeto: capFindCol_(header, ['Processo / Objeto', 'Processo Objeto']),
+    colServidor: capFindCol_(header, ['Servidor', 'Servidor EDITAR']),
+    colModalidade: capFindColExact_(header, 'Modalidade'),
+    colFase: capFindCol_(header, ['Fase da Carga', 'Fase Atual', 'Fase Atual EDITAR']),
+    colAtivo: capFindCol_(header, ['Ativo']),
+    colModPts: capFindCol_(header, ['Modalidade pts', 'Modalidade(pts)', 'Mod pts', 'Mod (pts)']),
+    colNatPts: capFindCol_(header, ['Natureza pts', 'Natureza(pts)', 'Nat pts', 'Nat (pts)']),
+    colSessPts: capFindCol_(header, ['Sessao pts', 'Sessao(pts)', 'Sessão pts', 'Sess pts', 'Sess (pts)']),
+    colOutrosPts: capFindCol_(header, ['Outros pts', 'Outros(pts)', 'Outros (pts)']),
+    colTotal: capFindCol_(header, ['Total']),
+    colObs: capFindCol_(header, ['Observacao', 'Observação'])
+  };
+  return info;
+}
+
+function capEnsureColumns_(ws) {
+  var info = capGetInfo_(ws);
+  var desired = [
+    { key: 'colPid', label: 'ProcessoID' },
+    { key: 'colModalidade', label: 'Modalidade' },
+    { key: 'colFase', label: 'Fase da Carga' },
+    { key: 'colAtivo', label: 'Ativo' }
+  ];
+  var lastCol = ws.getLastColumn();
+  desired.forEach(function(item) {
+    info = capGetInfo_(ws);
+    if (info[item.key] < 0) {
+      lastCol = Math.max(ws.getLastColumn(), lastCol) + 1;
+      ws.getRange(info.headerRow, lastCol).setValue(item.label);
+    }
+  });
+  return capGetInfo_(ws);
+}
+
+function capAtualizarFormulasResumo_(wsCap, info) {
+  if (info.colServidor < 0 || info.colTotal < 0 || info.colAtivo < 0) {
+    return false;
+  }
+  var maxRows = wsCap.getMaxRows();
+  var start = info.dataStartRow;
+  var end = maxRows;
+  var sheetName = "'" + wsCap.getName().replace(/'/g, "''") + "'";
+  var servidorRange = sheetName + '!' + capColLetter_(info.colServidor + 1) + start + ':' + capColLetter_(info.colServidor + 1) + end;
+  var totalRange = sheetName + '!' + capColLetter_(info.colTotal + 1) + start + ':' + capColLetter_(info.colTotal + 1) + end;
+  var ativoRange = sheetName + '!' + capColLetter_(info.colAtivo + 1) + start + ':' + capColLetter_(info.colAtivo + 1) + end;
+
+  // Linhas 5–8 = resumo por servidor (AMANDA, BEATRIZ, BRUNO, SAMUEL)
+  // col B = Outros (fixo), col C = Processos (soma via SUMIFS), col D = Total (=B+C)
+  for (var r = 5; r <= 8; r++) {
+    wsCap.getRange(r, 3).setFormula('=SUMIFS(' + totalRange + ',' + servidorRange + ',$A' + r + ',' + ativoRange + ',"Sim")');
+  }
+  return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// MIGRAR CAPACIDADE ATUAL — migrarCapacidadeAtual()
+//
+// Para cada processo de Pregao ja listado na aba Capacidade com apenas
+// uma linha (fase interna), cria a linha de fase externa correspondente.
+//
+// Regras:
+//   - Pontuacao preservada: os valores ja preenchidos nao sao alterados.
+//   - Servidor externo nao definido: linha criada com servidor = "REVISAR"
+//     e Ativo = "Nao" (fora do SUMIFS ate ser corrigido manualmente).
+//   - ProcessoID preenchido automaticamente cruzando objeto com aba Processos.
+//   - Linhas que ja tem fase externa definida (coluna "Fase da Carga" = "Externa")
+//     sao ignoradas — nao duplica.
+//   - Processos com IGOR: observacao marcada, servidor = "REVISAR".
+// ════════════════════════════════════════════════════════════════════════
+
+function migrarCapacidadeAtual() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var wsCap = capFindSheet_(ss, 'Capacidade');
+  if (!wsCap) { ui.alert('Aba Capacidade nao encontrada.'); return; }
+
+  var info = capGetInfo_(wsCap);
+  if (info.colPid < 0 || info.colServidor < 0 || info.colFase < 0 || info.colAtivo < 0) {
+    ui.alert('Colunas necessarias (ProcessoID / Servidor / Fase da Carga / Ativo) nao encontradas.\nImporte a planilha CronogramaContratacoes_CPII_v3.xlsx antes de migrar.');
+    return;
+  }
+
+  // Confirma antes de executar
+  var conf = ui.alert(
+    'Migrar capacidade atual',
+    'Esta funcao vai:\n' +
+    '  1. Preencher ProcessoID nas linhas que nao tem (cruzando pelo objeto).\n' +
+    '  2. Para cada Pregao com linha unica, criar a linha de fase externa\n' +
+    '     com Ativo=Nao e servidor=REVISAR (se nao houver segundo servidor).\n\n' +
+    'Pontuacoes existentes NAO serao alteradas.\nDeseja continuar?',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (conf !== ui.Button.OK) return;
+
+  // Carrega processos da aba Processos para cruzamento de PID por objeto
+  var processosPorObj = {};
+  var processosPorPid = {};
+  var wsProc = capFindSheet_(ss, 'Processos');
+  if (wsProc) {
+    var dpROC = wsProc.getDataRange().getValues();
+    var hpIdx = -1;
+    for (var hi = 0; hi < dpROC.length; hi++) {
+      if (dpROC[hi].join('|').indexOf('ProcessoID') >= 0) { hpIdx = hi; break; }
+    }
+    if (hpIdx >= 0) {
+      var hp = dpROC[hpIdx].map(function(h) { return String(h || '').trim(); });
+      var cpPid = capFindCol_(hp, ['ProcessoID']);
+      var cpObj = capFindCol_(hp, ['Objeto']);
+      var cpMod = capFindCol_(hp, ['Modalidade']);
+      for (var pr = hpIdx + 1; pr < dpROC.length; pr++) {
+        var ppid = String(dpROC[pr][cpPid] || '').trim();
+        var pobj = capNorm_(String(dpROC[pr][cpObj] || '').trim());
+        var pmod = String(dpROC[pr][cpMod] || '').trim();
+        if (!ppid) continue;
+        processosPorPid[ppid] = { pid: ppid, objeto: pobj, modalidade: pmod };
+        if (pobj) processosPorObj[pobj] = { pid: ppid, objeto: pobj, modalidade: pmod };
+      }
+    }
+  }
+
+  // Le todas as linhas do registro de capacidade
+  var lastRow = wsCap.getLastRow();
+  if (lastRow < info.dataStartRow) {
+    ui.alert('Nenhuma linha de dados encontrada no registro de capacidade.');
+    return;
+  }
+  var nCols = info.header.length;
+  var vals = wsCap.getRange(info.dataStartRow, 1, lastRow - info.dataStartRow + 1, nCols).getValues();
+
+  // Mapeia PIDs que ja tem linha externa definida (para nao duplicar)
+  var temFaseExterna = {};
+  for (var i = 0; i < vals.length; i++) {
+    var row = vals[i];
+    var pid  = String(row[info.colPid]  || '').trim();
+    var fase = capNorm_(String(row[info.colFase] || ''));
+    if (pid && fase.indexOf('EXTERNA') >= 0) temFaseExterna[pid] = true;
+  }
+
+  // Processa cada linha: preenche PID se ausente, cria linha externa se necessario
+  var alteracoes = 0;
+  var linhasExternas = []; // { afterRow, rowData }
+
+  for (var i = 0; i < vals.length; i++) {
+    var row = vals[i];
+    var rowNum = info.dataStartRow + i;
+
+    var servidorRaw = String(row[info.colServidor] || '').trim();
+    var objeto      = String(row[info.colObjeto >= 0 ? info.colObjeto : 1] || '').trim();
+    var pidAtual    = String(row[info.colPid] || '').trim();
+    var fase        = capNorm_(String(row[info.colFase] || ''));
+    var modalidade  = String(info.colModalidade >= 0 ? row[info.colModalidade] : '').trim();
+
+    // Linha vazia: pula
+    if (!servidorRaw && !objeto && !pidAtual) continue;
+
+    // --- Passo 1: preencher ProcessoID se ausente ---
+    var proc = null;
+    if (pidAtual) {
+      proc = processosPorPid[pidAtual] || null;
+    } else {
+      var objNorm = capNorm_(objeto);
+      // Tenta match exato primeiro, depois substring
+      proc = processosPorObj[objNorm] || null;
+      if (!proc) {
+        // Busca parcial: objeto da planilha contido no objeto do processo ou vice-versa
+        var keys = Object.keys(processosPorObj);
+        for (var k = 0; k < keys.length; k++) {
+          if (keys[k].indexOf(objNorm) >= 0 || objNorm.indexOf(keys[k]) >= 0) {
+            proc = processosPorObj[keys[k]];
+            break;
+          }
+        }
+      }
+      if (proc) {
+        wsCap.getRange(rowNum, info.colPid + 1).setValue(proc.pid);
+        pidAtual = proc.pid;
+        alteracoes++;
+      }
+    }
+
+    // Modalidade: usa a do registro; se vazia, usa a da aba Processos
+    if (!modalidade && proc) modalidade = proc.modalidade;
+
+    // --- Passo 2: para Pregao, criar linha externa se ainda nao existe ---
+    if (!capIsPregao_(modalidade)) continue;
+    if (temFaseExterna[pidAtual]) continue;         // ja tem linha externa
+    if (fase.indexOf('EXTERNA') >= 0) continue;     // esta propria linha e externa
+
+    // Descobre se ha outro servidor definido para este PID na aba Capacidade
+    var servidorExterno = 'REVISAR';
+    for (var j = 0; j < vals.length; j++) {
+      if (j === i) continue;
+      var outroRow = vals[j];
+      var outroPid  = String(outroRow[info.colPid] || '').trim();
+      var outraFase = capNorm_(String(outroRow[info.colFase] || ''));
+      var outroServ = capNorm_(String(outroRow[info.colServidor] || '').trim());
+      if (outroPid === pidAtual && outraFase.indexOf('EXTERNA') >= 0 && capIsServidorAtivo_(outroServ)) {
+        servidorExterno = outroServ; // ja existe uma linha externa com servidor valido
+        break;
+      }
+    }
+
+    // Monta linha externa preservando pontuacao base da linha interna
+    var modPts  = info.colModPts  >= 0 ? Number(row[info.colModPts])  || 0 : 0;
+    var sessPts = capIsPregao_(modalidade) ? 2 : 1; // sessao externa Pregao = 2
+    var totalExt = modPts + sessPts;
+
+    var novaLinha = info.header.map(function(col) {
+      var c = capNorm_(col);
+      if (c === 'PROCESSOID')                               return pidAtual || '';
+      if (c.indexOf('PROCESSOOBJETO') >= 0)                return objeto;
+      if (c === 'SERVIDOR' || c.indexOf('SERVIDOR') >= 0) return servidorExterno;
+      if (c === 'MODALIDADE')                               return modalidade;
+      if (c.indexOf('FASEDACARGA') >= 0 || c.indexOf('FASEATUAL') >= 0) return 'Fase Externa';
+      if (c === 'ATIVO')                                    return 'Nao';
+      if (c.indexOf('MODPTS') >= 0 || c.indexOf('MODPTSED') >= 0) return modPts;
+      if (c.indexOf('NATPTS')  >= 0)                        return 0;
+      if (c.indexOf('SESSPTS') >= 0 || c.indexOf('SESSPTSED') >= 0) return sessPts;
+      if (c.indexOf('OUTROSPTS') >= 0)                      return 0;
+      if (c === 'TOTAL')                                    return totalExt;
+      if (c.indexOf('OBSERV') >= 0) {
+        return servidorExterno === 'REVISAR'
+          ? 'Fase externa — definir responsavel manualmente (substituir REVISAR pelo nome do servidor)'
+          : 'Fase externa — responsavel definido automaticamente';
+      }
+      return '';
+    });
+
+    linhasExternas.push({ afterRow: rowNum, data: novaLinha });
+    temFaseExterna[pidAtual] = true; // evita duplicar se o mesmo PID aparecer duas vezes
+  }
+
+  // Insere as linhas externas de baixo para cima (para nao deslocar indices)
+  linhasExternas.reverse().forEach(function(item) {
+    var nextEmpty = capNextEmptyRow_(wsCap, info);
+    wsCap.getRange(nextEmpty, 1, 1, item.data.length).setValues([item.data]);
+    alteracoes++;
+  });
+
+  invalidarCache();
+
+  var msg = 'Migracao concluida.\n\n' +
+    'ProcessoIDs preenchidos/linhas externas criadas: ' + alteracoes + '\n\n';
+  if (linhasExternas.length > 0) {
+    msg += 'Linhas externas criadas com servidor = REVISAR:\n' +
+      linhasExternas.map(function(l) {
+        return '  • ' + (l.data[info.colPid] || '?') + ' — ' + (l.data[info.colObjeto >= 0 ? info.colObjeto : 1] || '');
+      }).join('\n') + '\n\n' +
+      'Substitua REVISAR pelo nome do servidor responsavel pela fase externa.';
+  } else {
+    msg += 'Nenhuma linha externa nova necessaria.';
+  }
+  ui.alert(msg);
+}
+
+
+function capModalidadePts_(modalidade) {
+  var m = capNorm_(modalidade);
+  if (m.indexOf('DISPENSA') >= 0) return 1;
+  if (m.indexOf('INEXIG') >= 0) return 2;
+  if (m.indexOf('PREGAO') >= 0 || m.indexOf('CONCORR') >= 0) return 3;
+  if (m.indexOf('DIRETA') >= 0) return 1;
+  return 3;
+}
+
+function capIsPregao_(modalidade) {
+  return capNorm_(modalidade).indexOf('PREGAO') >= 0;
+}
+
+function capPromptServidor_(ui, titulo, mensagem) {
+  while (true) {
+    var resp = ui.prompt(titulo, mensagem + '\n\nOpcoes: Amanda, Beatriz, Bruno, Samuel', ui.ButtonSet.OK_CANCEL);
+    if (resp.getSelectedButton() !== ui.Button.OK) return null; // usuario cancelou
+    var nome = capNorm_(resp.getResponseText());
+    if (capIsServidorAtivo_(nome)) return nome;
+    ui.alert('Servidor invalido. Use Amanda, Beatriz, Bruno ou Samuel.\n\nObrigatorio para continuar. Clique OK e tente novamente, ou cancele para abortar.');
+  }
+}
+
+function capPromptNumero_(ui, titulo, mensagem, mapa, padrao) {
+  var resp = ui.prompt(titulo, mensagem, ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return null;
+  var val = String(resp.getResponseText() || '').trim();
+  return mapa.hasOwnProperty(val) ? mapa[val] : padrao;
+}
+
+function capSplitResponsaveis_(texto) {
+  var raw = String(texto || '').toUpperCase()
+    .replace(/\s+E\s+/g, '/')
+    .replace(/[,;|+]/g, '/')
+    .split('/');
+  var out = [];
+  raw.forEach(function(p) {
+    var n = capNorm_(p);
+    if (!n || n === 'IGOR') return;
+    if (CAP_SERVIDORES_ATIVOS.indexOf(n) >= 0 && out.indexOf(n) < 0) out.push(n);
+  });
+  return out.slice(0, 2);
+}
+
+function capPontuacaoNota_(item) {
+  var partes = [
+    'ProcessoID: ' + item.pid,
+    'Modalidade: ' + item.modalidade + ' = ' + item.modPts + ' pts',
+    'Natureza = ' + item.natPts + ' pts',
+    'Sessao = ' + item.sessPts + ' pts',
+    'Outros = ' + item.outrosPts + ' pts',
+    'Total da linha = ' + item.total + ' pts',
+    'Fase da carga: ' + item.fase
+  ];
+  if (item.divisao) partes.push(item.divisao);
+  if (item.obs) partes.push('Obs.: ' + item.obs);
+  return partes.join('\n');
+}
+
+function capRowFromItem_(header, item) {
+  return header.map(function(col) {
+    var c = capNorm_(col);
+    if (c === 'PROCESSOID') return item.pid;
+    if (c.indexOf('PROCESSOOBJETO') >= 0) return item.objeto;
+    if (c === 'SERVIDOR' || c.indexOf('SERVIDOR') >= 0) return item.servidor;
+    if (c === 'MODALIDADE') return item.modalidade;
+    if (c.indexOf('FASEDACARGA') >= 0 || c.indexOf('FASEATUAL') >= 0) return item.fase;
+    if (c === 'ATIVO') return item.ativo;
+    if (c.indexOf('MODALIDADEPTS') >= 0) return item.modPts;
+    if (c.indexOf('NATUREZAPTS') >= 0) return item.natPts;
+    if (c.indexOf('SESSAOPTS') >= 0) return item.sessPts;
+    if (c.indexOf('OUTROSPTS') >= 0) return item.outrosPts;
+    if (c === 'TOTAL') return item.total;
+    if (c.indexOf('OBSERV') >= 0) return item.obs || '';
+    return '';
+  });
+}
+
+function capBuildProcessos_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var wsProc = capFindSheet_(ss, 'Processos');
+  if (!wsProc) return [];
+  var dados = wsProc.getDataRange().getValues();
+  var hIdx = -1;
+  for (var i = 0; i < dados.length; i++) {
+    if (dados[i].join('|').indexOf('ProcessoID') >= 0) { hIdx = i; break; }
+  }
+  if (hIdx < 0) return [];
+  var h = dados[hIdx].map(function(x) { return String(x || '').trim(); });
+  var cPid = capFindCol_(h, ['ProcessoID']);
+  var cObj = capFindCol_(h, ['Objeto']);
+  var cMod = capFindCol_(h, ['Modalidade']);
+  var cIrp = capFindCol_(h, ['Tem IRP?', 'Tem IRP']);
+  var cResp = capFindCol_(h, ['Responsaveis', 'Responsáveis', 'Responsavel', 'Responsável']);
+  var out = [];
+  for (var r = hIdx + 1; r < dados.length; r++) {
+    var pid = String(dados[r][cPid] || '').trim();
+    if (!pid) continue;
+    out.push({
+      pid: pid,
+      objeto: String(dados[r][cObj] || '').trim(),
+      modalidade: String(dados[r][cMod] || '').trim(),
+      temIRP: String(dados[r][cIrp] || '').trim(),
+      responsaveis: cResp >= 0 ? String(dados[r][cResp] || '').trim() : ''
+    });
+  }
+  return out;
+}
+
+function capMatchProcessoByObjeto_(texto, processos) {
+  var alvo = capNorm_(texto);
+  if (!alvo) return { status: 'vazio', processo: null };
+  var matches = processos.filter(function(p) {
+    var obj = capNorm_(p.objeto);
+    if (!obj) return false;
+    return obj === alvo || obj.indexOf(alvo) >= 0 || alvo.indexOf(obj) >= 0;
+  });
+  if (matches.length === 1) return { status: 'ok', processo: matches[0] };
+  if (matches.length > 1) return { status: 'multiplo', processo: null };
+  return { status: 'nao_encontrado', processo: null };
+}
+
+function capBuildCapacidadeAtual_(processos) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var wsCap = capFindSheet_(ss, 'Capacidade');
+  if (!wsCap) return [];
+  var info = capEnsureColumns_(wsCap);
+  var lastRow = wsCap.getLastRow();
+  if (lastRow < info.dataStartRow) return [];
+  var vals = wsCap.getRange(info.dataStartRow, 1, lastRow - info.dataStartRow + 1, info.header.length).getValues();
+  var out = [];
+  for (var i = 0; i < vals.length; i++) {
+    var row = vals[i];
+    var servidor = info.colServidor >= 0 ? capNorm_(row[info.colServidor]) : '';
+    var objeto = info.colObjeto >= 0 ? String(row[info.colObjeto] || '').trim() : '';
+    var total = info.colTotal >= 0 ? Number(row[info.colTotal]) || 0 : 0;
+    if (!servidor || !objeto || !total) continue;
+    if (!capIsServidorAtivo_(servidor)) continue;
+
+    var pidAtual = info.colPid >= 0 ? String(row[info.colPid] || '').trim() : '';
+    var processo = null;
+    var matchStatus = 'sem_pid';
+    if (pidAtual) {
+      processo = processos.filter(function(p) { return p.pid === pidAtual; })[0] || null;
+      matchStatus = processo ? 'ok' : 'pid_nao_encontrado';
+    } else {
+      var match = capMatchProcessoByObjeto_(objeto, processos);
+      processo = match.processo;
+      matchStatus = match.status;
+    }
+
+    out.push({
+      rowNumber: info.dataStartRow + i,
+      pid: processo ? processo.pid : pidAtual,
+      objeto: processo ? processo.objeto : objeto,
+      servidor: servidor,
+      modalidade: processo ? processo.modalidade : '',
+      fase: info.colFase >= 0 ? String(row[info.colFase] || 'Unica').trim() : 'Unica',
+      ativo: matchStatus === 'ok' ? 'Sim' : 'REVISAR',
+      modPts: info.colModPts >= 0 ? Number(row[info.colModPts]) || 0 : 0,
+      natPts: info.colNatPts >= 0 ? Number(row[info.colNatPts]) || 0 : 0,
+      sessPts: info.colSessPts >= 0 ? Number(row[info.colSessPts]) || 0 : 0,
+      outrosPts: info.colOutrosPts >= 0 ? Number(row[info.colOutrosPts]) || 0 : 0,
+      total: total,
+      obs: info.colObs >= 0 ? String(row[info.colObs] || '').trim() : '',
+      matchStatus: matchStatus
+    });
+  }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// capBuildEtapasStatus_()
+//
+// Lê a aba de Etapas e devolve um mapa { pid → statusObj } com os
+// sinalizadores que controlam a coluna Ativo na aba Capacidade.
+//
+// Campos do statusObj:
+//   etapa1Ativa    — etapa 1 (Designação) está Em andamento ou Concluída
+//                    → gatilho para ativar a Fase Interna automaticamente
+//   etapa7Concluida — etapa 7 (Envio ao SEL/SEPMA) está Concluída
+//                    → gatilho para ativar Fase Externa e desativar Interna
+//   concluidoSEL   — todas as etapas 1–8 estão Concluídas ou Não se aplica
+//                    → desativa todas as linhas do processo na Capacidade
+//   temEtapaSEL    — flag de sanidade: processo tem pelo menos uma etapa
+// ════════════════════════════════════════════════════════════════════════
+function capBuildEtapasStatus_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var wsEtapas = capFindSheet_(ss, 'Etapas');
+  var status = {};
+  if (!wsEtapas) return status;
+  var dados = wsEtapas.getDataRange().getValues();
+  var hIdx = -1;
+  for (var i = 0; i < dados.length; i++) {
+    if (dados[i].join('|').indexOf('ProcessoID') >= 0) { hIdx = i; break; }
+  }
+  if (hIdx < 0) return status;
+  var h = dados[hIdx].map(function(x) { return String(x || '').trim(); });
+  var cPid  = capFindCol_(h, ['ProcessoID']);
+  var cOrd  = capFindCol_(h, ['Ord.']);
+  var cStat = capFindCol_(h, ['StatusEtapa ◄ EDITAR', 'StatusEtapa EDITAR', 'StatusEtapa']);
+  for (var r = hIdx + 1; r < dados.length; r++) {
+    var pid = String(dados[r][cPid] || '').trim();
+    if (!pid) continue;
+    var ord = parseInt(dados[r][cOrd], 10);
+    var st  = normalizeStatus(String(dados[r][cStat] || '').trim());
+    if (!status[pid]) status[pid] = {
+      etapa1Ativa:     false,   // etapa 1 em andamento ou concluída
+      etapa7Concluida: false,   // etapa 7 concluída → vira fase externa
+      concluidoSEL:    true,    // todo processo concluído até prova em contrário
+      temEtapaSEL:     false
+    };
+    // Etapa 1 — Designação da equipe: ativa quando Em andamento ou Concluída
+    if (ord === 1 && (st === 'andamento' || st === 'ok')) {
+      status[pid].etapa1Ativa = true;
+    }
+    // Etapa 7 — Envio ao SEL/SEPMA: ativa fase externa quando Concluída
+    if (ord === 7 && st === 'ok') {
+      status[pid].etapa7Concluida = true;
+    }
+    // Qualquer etapa SEL (1-8) não concluída → processo ainda em andamento
+    if (ord >= 1 && ord <= 8) {
+      status[pid].temEtapaSEL = true;
+      if (st !== 'ok' && st !== 'naoaplica') status[pid].concluidoSEL = false;
+    }
+  }
+  Object.keys(status).forEach(function(pid) {
+    if (!status[pid].temEtapaSEL) status[pid].concluidoSEL = false;
+  });
+  return status;
+}
+
+function capNextEmptyRow_(ws, info) {
+  var max = ws.getMaxRows();
+  var width = Math.max(info.header.length, ws.getLastColumn());
+  var vals = ws.getRange(info.dataStartRow, 1, max - info.dataStartRow + 1, width).getValues();
+  for (var i = 0; i < vals.length; i++) {
+    var pid = info.colPid >= 0 ? String(vals[i][info.colPid] || '').trim() : '';
+    var obj = info.colObjeto >= 0 ? String(vals[i][info.colObjeto] || '').trim() : '';
+    var serv = info.colServidor >= 0 ? String(vals[i][info.colServidor] || '').trim() : '';
+    var total = info.colTotal >= 0 ? String(vals[i][info.colTotal] || '').trim() : '';
+    if (!pid && !obj && !serv && !total) return info.dataStartRow + i;
+  }
+  ws.insertRowsAfter(max, 20);
+  return max + 1;
+}
+
+function capAppendRows_(items) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var wsCap = capFindSheet_(ss, 'Capacidade');
+  if (!wsCap || !items || !items.length) return 0;
+  var info = capEnsureColumns_(wsCap);
+  var row = capNextEmptyRow_(wsCap, info);
+  var values = items.map(function(item) { return capRowFromItem_(info.header, item); });
+  var alvo = wsCap.getRange(row, 1, values.length, info.header.length).getValues();
+  var precisaInserir = alvo.some(function(r) {
+    return r.some(function(c) { return String(c || '').trim() !== ''; });
+  });
+  if (precisaInserir) {
+    wsCap.insertRowsBefore(row, values.length);
+    info = capGetInfo_(wsCap);
+  }
+  capAtualizarFormulasResumo_(wsCap, info);
+  wsCap.getRange(row, 1, values.length, info.header.length).setValues(values);
+  items.forEach(function(item, idx) {
+    var note = capPontuacaoNota_(item);
+    if (info.colServidor >= 0) wsCap.getRange(row + idx, info.colServidor + 1).setNote(note);
+    if (info.colTotal >= 0) wsCap.getRange(row + idx, info.colTotal + 1).setNote(note);
+  });
+  return values.length;
+}
+
+function prepararMigracaoCapacidade() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var processos = capBuildProcessos_();
+  var etapas = capBuildEtapasStatus_();
+  if (!processos.length) { ui.alert('Nenhum processo encontrado para migracao.'); return; }
+
+  var name = 'Previa Migracao Capacidade';
+  var wsPrev = ss.getSheetByName(name) || ss.insertSheet(name);
+  wsPrev.clear();
+  var header = ['Aplicar?', 'ProcessoID', 'Processo / Objeto', 'Servidor', 'Modalidade', 'Fase da Carga', 'Ativo', 'Modalidade pts', 'Natureza pts', 'Sessao pts', 'Outros pts', 'Total', 'Observacao'];
+  var rows = [header];
+
+  var atuais = capBuildCapacidadeAtual_(processos);
+  if (atuais.length) {
+    atuais.forEach(function(item) {
+      var stAtual = item.pid ? etapas[item.pid] || {} : {};
+      var faseAtual = item.fase || 'Unica';
+      var ativoAtual = item.ativo;
+      if (ativoAtual !== 'REVISAR' && stAtual.concluidoSEL) ativoAtual = 'Nao';
+      if (ativoAtual !== 'REVISAR' && capIsPregao_(item.modalidade)) {
+        faseAtual = stAtual.etapa7Concluida ? 'Externa' : 'Interna';
+      }
+      var obsAtual = item.obs;
+      if (item.matchStatus !== 'ok') {
+        obsAtual = 'REVISAR vinculo ProcessoID (' + item.matchStatus + '). ' + obsAtual;
+      } else {
+        obsAtual = 'Migrado da linha atual da Capacidade ' + item.rowNumber + '. ' + obsAtual;
+      }
+      rows.push([
+        item.ativo === 'REVISAR' ? 'Nao' : 'Sim',
+        item.pid,
+        item.objeto,
+        item.servidor,
+        item.modalidade,
+        faseAtual,
+        ativoAtual,
+        item.modPts,
+        item.natPts,
+        item.sessPts,
+        item.outrosPts,
+        item.total,
+        obsAtual
+      ]);
+    });
+  } else {
+    processos.forEach(function(p) {
+      var resp = capSplitResponsaveis_(p.responsaveis);
+      var tinhaIgor = String(p.responsaveis || '').toUpperCase().indexOf('IGOR') >= 0;
+      var revisar = resp.length === 0;
+      if (resp.length === 0) resp = ['REVISAR'];
+      var base = capModalidadePts_(p.modalidade);
+      var st = etapas[p.pid] || {};
+      var fase = capIsPregao_(p.modalidade) ? (st.etapa7Concluida ? 'Externa' : 'Interna') : 'Unica';
+      var ativo = st.concluidoSEL ? 'Nao' : (revisar ? 'REVISAR' : 'Sim');
+      resp.forEach(function(s) {
+        var modPts = base; // pontuacao cheia para cada servidor (cada um carrega o peso do processo)
+        rows.push([
+          revisar ? 'Nao' : 'Sim',
+          p.pid,
+          p.objeto,
+          s,
+          p.modalidade,
+          fase,
+          ativo,
+          modPts,
+          0,
+          0,
+          0,
+          modPts,
+          (revisar ? 'REVISAR responsavel/pontuacao. ' : '') + (tinhaIgor ? 'IGOR ignorado por nao estar mais no setor. ' : '') + 'Ajustar adicionais da matriz (Natureza, Sessao, Outros) se necessario.'
+        ]);
+      });
+    });
+  }
+  wsPrev.getRange(1, 1, rows.length, header.length).setValues(rows);
+  wsPrev.setFrozenRows(1);
+  ui.alert('Previa de migracao criada na aba "' + name + '".\n\n' +
+    (atuais.length ? 'Usei as linhas atuais da aba Capacidade como base, preservando servidor, pontos e fase.\n' : 'Nao encontrei linhas atuais aproveitaveis; usei a aba Processos como base.\n') +
+    'Confira ProcessoID, responsaveis, pontos e Aplicar? antes de rodar "Aplicar migracao".');
+}
+
+function aplicarMigracaoCapacidade() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var wsPrev = ss.getSheetByName('Previa Migracao Capacidade');
+  if (!wsPrev) { ui.alert('Aba de previa nao encontrada. Rode "Preparar migracao" primeiro.'); return; }
+  var dados = wsPrev.getDataRange().getValues();
+  if (dados.length < 2) { ui.alert('Previa vazia.'); return; }
+  var h = dados[0].map(function(x) { return String(x || '').trim(); });
+  var cAplicar = capFindCol_(h, ['Aplicar?']);
+  var cPid = capFindCol_(h, ['ProcessoID']);
+  var cObj = capFindCol_(h, ['Processo / Objeto']);
+  var cServ = capFindCol_(h, ['Servidor']);
+  var cMod = capFindCol_(h, ['Modalidade']);
+  var cFase = capFindCol_(h, ['Fase da Carga']);
+  var cAtivo = capFindCol_(h, ['Ativo']);
+  var cModPts = capFindCol_(h, ['Modalidade pts']);
+  var cNatPts = capFindCol_(h, ['Natureza pts']);
+  var cSessPts = capFindCol_(h, ['Sessao pts']);
+  var cOutrosPts = capFindCol_(h, ['Outros pts']);
+  var cTotal = capFindCol_(h, ['Total']);
+  var cObs = capFindCol_(h, ['Observacao']);
+
+  var wsCap = capFindSheet_(ss, 'Capacidade');
+  var existing = {};
+  if (wsCap) {
+    var infoCap = capEnsureColumns_(wsCap);
+    var lastCap = wsCap.getLastRow();
+    if (lastCap >= infoCap.dataStartRow && infoCap.colPid >= 0 && infoCap.colServidor >= 0 && infoCap.colFase >= 0) {
+      var capVals = wsCap.getRange(infoCap.dataStartRow, 1, lastCap - infoCap.dataStartRow + 1, infoCap.header.length).getValues();
+      capVals.forEach(function(row) {
+        var key = capNorm_(row[infoCap.colPid]) + '|' + capNorm_(row[infoCap.colServidor]) + '|' + capNorm_(row[infoCap.colFase]);
+        if (key.replace(/\|/g, '')) existing[key] = true;
+      });
+    }
+  }
+
+  var items = [];
+  for (var r = 1; r < dados.length; r++) {
+    if (capNorm_(dados[r][cAplicar]) !== 'SIM') continue;
+    var servidor = String(dados[r][cServ] || '').trim();
+    var ativo = String(dados[r][cAtivo] || '').trim();
+    if (!capIsServidorAtivo_(servidor) || capNorm_(ativo) === 'REVISAR') continue;
+    var keyMig = capNorm_(dados[r][cPid]) + '|' + capNorm_(servidor) + '|' + capNorm_(dados[r][cFase]);
+    if (existing[keyMig]) continue;
+    existing[keyMig] = true;
+    items.push({
+      pid: String(dados[r][cPid] || '').trim(),
+      objeto: String(dados[r][cObj] || '').trim(),
+      servidor: capNorm_(servidor),
+      modalidade: String(dados[r][cMod] || '').trim(),
+      fase: String(dados[r][cFase] || '').trim(),
+      ativo: ativo || 'Sim',
+      modPts: Number(dados[r][cModPts]) || 0,
+      natPts: Number(dados[r][cNatPts]) || 0,
+      sessPts: Number(dados[r][cSessPts]) || 0,
+      outrosPts: Number(dados[r][cOutrosPts]) || 0,
+      total: Number(dados[r][cTotal]) || 0,
+      obs: String(dados[r][cObs] || '').trim(),
+      divisao: ''
+    });
+  }
+  var count = capAppendRows_(items);
+  invalidarCache();
+  ui.alert(count + ' linha(s) migrada(s) para a aba Capacidade.\n\nLinhas marcadas como REVISAR ou Aplicar? = Nao nao foram importadas.');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// sincronizarCapacidade()
+//
+// Percorre a aba Capacidade e atualiza a coluna "Ativo" automaticamente
+// com base no status das etapas na aba Etapas:
+//
+//   Regra 1 — Processo concluído (todas etapas 1-8 ok/naoaplica):
+//     → Ativo = "Não" em todas as linhas do processo
+//
+//   Regra 2 — Fase Interna:
+//     → Ativo = "Sim"  se etapa 1 (Designação) está Em andamento ou Concluída
+//               E etapa 7 ainda não foi concluída
+//     → Ativo = "Não"  assim que etapa 7 (Envio ao SEL) for Concluída
+//       (processo migra para fase externa — o servidor interno é liberado)
+//
+//   Regra 3 — Fase Externa:
+//     → Ativo = "Sim"  quando etapa 7 (Envio ao SEL/SEPMA) for Concluída
+//     → Ativo = "Não"  enquanto etapa 7 ainda não foi concluída
+//
+//   Regra 4 — Fase Única (Dispensa/Contratação Direta):
+//     → Ativo = "Sim"  quando etapa 1 estiver Em andamento ou Concluída
+//     → Ativo = "Não"  quando processo estiver concluído
+//
+//   Linhas com Ativo = "REVISAR" são preservadas — não são tocadas.
+//
+// Pode ser chamada:
+//   - Pelo menu "Capacidade → Sincronizar capacidade"
+//   - Automaticamente pelo onEditAtraso() a cada edição de StatusEtapa
+//   - Pelo trigger diário (atualizacaoDiaria)
+// ════════════════════════════════════════════════════════════════════════
+function sincronizarCapacidade(silencioso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var wsCap = capFindSheet_(ss, 'Capacidade');
+  if (!wsCap) return { ok: false, erro: 'Aba Capacidade nao encontrada.' };
+  var info = capGetInfo_(wsCap);
+  if (info.colPid < 0 || info.colFase < 0 || info.colAtivo < 0) {
+    if (!silencioso) SpreadsheetApp.getUi().alert('Prepare a automacao de capacidade antes de sincronizar.');
+    return { ok: false, erro: 'Colunas ProcessoID/Fase/Ativo ausentes.' };
+  }
+  var etapas = capBuildEtapasStatus_();
+  var lastRow = wsCap.getLastRow();
+  if (lastRow < info.dataStartRow) return { ok: true, alteradas: 0 };
+
+  // Remove validação de dados e notas da coluna Ativo para não bloquear a escrita.
+  // A validação 'Sim/Nao/REVISAR' foi adicionada em versões anteriores e causa o
+  // popup "_x000a_" e pode rejeitar valores silenciosamente dependendo do acento.
+  if (info.colAtivo >= 0) {
+    var ativoRange = wsCap.getRange(info.dataStartRow, info.colAtivo + 1,
+                                    lastRow - info.dataStartRow + 1, 1);
+    ativoRange.clearDataValidations();
+    ativoRange.clearNote();
+  }
+
+  var values = wsCap.getRange(
+    info.dataStartRow, 1,
+    lastRow - info.dataStartRow + 1,
+    info.header.length
+  ).getValues();
+  var changed = 0;
+
+  for (var i = 0; i < values.length; i++) {
+    var pid        = String(values[i][info.colPid]   || '').trim();
+    var ativoAtual = String(values[i][info.colAtivo] || '').trim();
+    var fase       = capNorm_(values[i][info.colFase]);
+
+    if (!pid) continue;
+
+    // Linhas marcadas como REVISAR são preservadas — não mexer
+    if (capNorm_(ativoAtual) === 'REVISAR') continue;
+
+    // Processo sem etapas mapeadas — sem dados suficientes para decidir
+    if (!etapas[pid]) continue;
+
+    var st = etapas[pid];
+    var novoAtivo = ativoAtual; // mantém por padrão
+
+    if (st.concluidoSEL) {
+      // Regra 1: processo todo concluído → desativa tudo
+      novoAtivo = 'Nao';
+
+    } else if (fase.indexOf('UNICA') >= 0) {
+      // Regra 4: fase única (Dispensa/CD sem segregação) → ativa com etapa 1
+      novoAtivo = st.etapa1Ativa ? 'Sim' : 'Nao';
+
+    } else if (fase.indexOf('INTERNA') >= 0) {
+      // Regra 2: fase interna ativa enquanto etapa 1 iniciou e etapa 7 não concluiu
+      novoAtivo = (st.etapa1Ativa && !st.etapa7Concluida) ? 'Sim' : 'Nao';
+
+    } else if (fase.indexOf('EXTERNA') >= 0) {
+      // Regra 3: fase externa ativa somente após etapa 7 concluída
+      novoAtivo = st.etapa7Concluida ? 'Sim' : 'Nao';
+    }
+
+    // Normaliza o valor atual para comparação sem sensibilidade a acento
+    // (célula pode ter 'Não', 'Nao', 'não', 'nao' — tudo equivale a 'Nao')
+    var ativoNorm = capNorm_(ativoAtual);
+    var novoNorm  = capNorm_(novoAtivo);
+    if (ativoNorm !== novoNorm) {
+      wsCap.getRange(info.dataStartRow + i, info.colAtivo + 1).setValue(novoAtivo);
+      changed++;
+    }
+  }
+
+  // ── Transferência de pontuação fase Interna → Externa (Pregão) ──────────
+  // Quando a etapa 7 é concluída, a linha Interna passa a Ativo=Nao e a linha
+  // Externa passa a Ativo=Sim. Nesse momento, os pontos de Natureza/IRP da fase
+  // interna devem ser zerados (responsável interno liberado) e os pontos da fase
+  // externa devem refletir o que foi calculado no wizard.
+  //
+  // Esta rotina percorre cada PID de Pregão onde etapa7Concluida=true e garante:
+  //   • Linha Interna  → Total recalculado sem Nat/IRP (só modPts)
+  //   • Linha Externa  → Total recalculado com sess/nat/grupos (já estava correto)
+  //   • SUMIFS da planilha recalcula automaticamente via Ativo=Sim/Nao
+  if (info.colPid >= 0 && info.colFase >= 0 && info.colAtivo >= 0 &&
+      info.colModPts >= 0 && info.colNatPts >= 0 && info.colSessPts >= 0 &&
+      info.colOutrosPts >= 0 && info.colTotal >= 0) {
+
+    var valuesAtual = wsCap.getRange(
+      info.dataStartRow, 1,
+      lastRow - info.dataStartRow + 1,
+      info.header.length
+    ).getValues();
+
+    for (var j = 0; j < valuesAtual.length; j++) {
+      var jPid   = String(valuesAtual[j][info.colPid]  || '').trim();
+      var jFase  = capNorm_(valuesAtual[j][info.colFase]);
+      if (!jPid || !etapas[jPid]) continue;
+      if (!etapas[jPid].etapa7Concluida) continue;         // só age quando etapa 7 concluída
+      if (capNorm_(String(valuesAtual[j][info.colAtivo] || '')) === 'REVISAR') continue;
+
+      // Linha Interna de Pregão após conclusão da etapa 7:
+      // zera Nat e Outros (IRP) — responsável interno foi liberado
+      if (jFase.indexOf('INTERNA') >= 0) {
+        var modPtsAtual  = Number(valuesAtual[j][info.colModPts])   || 0;
+        var natPtsAtual  = Number(valuesAtual[j][info.colNatPts])   || 0;
+        var outrosPtsAt  = Number(valuesAtual[j][info.colOutrosPts]) || 0;
+        // Só altera se ainda tem pontos que deveriam ser zerados
+        if (natPtsAtual !== 0 || outrosPtsAt !== 0) {
+          var novoTotal = modPtsAtual; // fase interna encerrada: só conta modalidade base
+          wsCap.getRange(info.dataStartRow + j, info.colNatPts   + 1).setValue(0);
+          wsCap.getRange(info.dataStartRow + j, info.colOutrosPts + 1).setValue(0);
+          wsCap.getRange(info.dataStartRow + j, info.colTotal     + 1).setValue(novoTotal);
+          changed++;
+        }
+      }
+    }
+  }
+
+  invalidarCache();
+  if (!silencioso) {
+    SpreadsheetApp.getUi().alert(
+      'Capacidade sincronizada!\n\n' +
+      'Linhas atualizadas: ' + changed + '\n\n' +
+      'Regras aplicadas:\n' +
+      '  • Fase Interna → Sim quando etapa 1 (Designação) iniciada\n' +
+      '  • Fase Interna → Não quando etapa 7 (Envio ao SEL) concluída\n' +
+      '  • Fase Externa → Sim quando etapa 7 (Envio ao SEL) concluída\n' +
+      '  • Fase Interna concluída → pontos de Natureza/IRP zerados (responsável liberado)\n' +
+      '  • Concluído    → Não em todas as linhas'
+    );
+  }
+  return { ok: true, alteradas: changed };
+}
+
+function concluirProcesso() {
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.prompt('Concluir processo', 'Informe o ProcessoID (ex: SEL-2026-001):', ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+  var pidAlvo = resp.getResponseText().trim();
+  if (!pidAlvo) return;
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var wsCap = capFindSheet_(ss, 'Capacidade');
+  if (!wsCap) { ui.alert('Aba Capacidade nao encontrada.'); return; }
+  var info = capGetInfo_(wsCap);
+  if (info.colPid < 0 || info.colAtivo < 0) { ui.alert('Colunas ProcessoID/Ativo nao encontradas.'); return; }
+  var lastRow = wsCap.getLastRow();
+  var count = 0;
+  if (lastRow >= info.dataStartRow) {
+    var vals = wsCap.getRange(info.dataStartRow, 1, lastRow - info.dataStartRow + 1, info.header.length).getValues();
+    for (var i = 0; i < vals.length; i++) {
+      if (String(vals[i][info.colPid] || '').trim() === pidAlvo) {
+        wsCap.getRange(info.dataStartRow + i, info.colAtivo + 1).setValue('Nao');
+        count++;
+      }
+    }
+  }
+  invalidarCache();
+  ui.alert(count ? 'Carga de ' + pidAlvo + ' desativada na Capacidade.' : 'ProcessoID nao encontrado na Capacidade.');
 }
 
 
@@ -1007,19 +2085,36 @@ function onEdit(e) {
   var nomAba = sheet.getName().replace(/\s/g, '').toLowerCase();
   if (nomAba.indexOf('etapa') < 0) return;
 
-  // Lê o cabeçalho para localizar a coluna DataRealizacao◄ EDITAR
+  // Lê o cabeçalho uma vez para localizar as colunas relevantes
   var lastCol = sheet.getLastColumn();
   if (lastCol < 1) return;
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  var colDR = -1;
-  for (var i = 0; i < header.length; i++) {
-    if (String(header[i]).trim() === 'DataRealizacao◄ EDITAR') { colDR = i; break; }
-  }
-  if (colDR < 0) return;
 
-  // Re-aplica DD/MM/YYYY somente se a célula editada for da coluna DataRealizacao
-  if (e.range.getColumn() === colDR + 1) {
+  var colDR   = -1;  // DataRealizacao
+  var colStat = -1;  // StatusEtapa
+
+  for (var i = 0; i < header.length; i++) {
+    var h = String(header[i]).trim();
+    if (h === 'DataRealizacao◄ EDITAR')    colDR   = i;
+    if (h.indexOf('StatusEtapa') >= 0)     colStat = i;
+  }
+
+  var colEditada = e.range.getColumn();
+
+  // Re-aplica DD/MM/YYYY se editou DataRealizacao
+  if (colDR >= 0 && colEditada === colDR + 1) {
     e.range.setNumberFormat('DD/MM/YYYY');
+  }
+
+  // Sincroniza Capacidade se editou StatusEtapa
+  // onEdit simples NÃO tem permissão de UI — sincronizarCapacidade() funciona
+  // em modo silencioso (só lê/grava células, sem alert/prompt)
+  if (colStat >= 0 && colEditada === colStat + 1) {
+    try {
+      sincronizarCapacidade(true);
+    } catch(eSinc) {
+      Logger.log('[onEdit] Falha ao sincronizar capacidade: ' + eSinc.message);
+    }
   }
 }
 
@@ -1098,6 +2193,7 @@ function onEditAtraso(e) {
         // Se motivo já preenchido — não faz nada (preserva o motivo existente)
       }
     }
+    try { sincronizarCapacidade(true); } catch(eSyncStatus) {}
     return; // encerra — edição de status não passa pelo bloco de DataRealizacao
   }
 
@@ -1214,6 +2310,7 @@ function onEditAtraso(e) {
   }
 
   // Invalida o cache do painel para refletir a alteração na próxima carga
+  try { sincronizarCapacidade(true); } catch(eSyncData) {}
   invalidarCache();
 }
 
@@ -1239,11 +2336,13 @@ function onEditAtraso(e) {
 //   { ok: false, erro: "..." }
 //
 // ESTRUTURA ESPERADA DA ABA "📊 Capacidade":
-//   Linha 13, coluna B → % ocupado do setor (número ou fórmula =D10/E10)
-//   Linha 13, coluna C → nível textual ("🟢 Disponível" | "🟡 Limitada" | "🔴 Máxima")
-//   Linha 13, coluna D → mensagem descritiva
-//   Linha 10, coluna D → total de pontos do setor (=SUM(D6:D9))
-//   Linha 10, coluna E → teto total de pontos (=SUM(E6:E9))
+//   Linha 11, coluna B → % ocupado do setor (número ou fórmula =D9/E9)
+//   Linha 11, coluna C → nível textual ("🟢 Disponível" | "🟡 Limitada" | "🔴 Máxima")
+//   Linha 11, coluna D → mensagem descritiva
+//   Linha  9, coluna D → total de pontos do setor (=SUM(D5:D8))
+//   Linha  9, coluna E → teto total de pontos (=SUM(E5:E8))
+//   Resumo servidores: linhas 5–8 (AMANDA, BEATRIZ, BRUNO, SAMUEL)
+//   Teto individual: 8 pts por servidor
 // ════════════════════════════════════════════════════════════════════════
 function getCapacidade() {
   try {
@@ -1269,20 +2368,20 @@ function getCapacidade() {
     // Lê o bloco de dados relevante de uma só vez (linhas 1-30 devem cobrir tudo)
     var dados = wsCap.getDataRange().getValues();
 
-    // Linha 10 = índice 9 (0-based) → totais do setor
-    // Linha 13 = índice 12 (0-based) → status de capacidade
+    // Linha 9  = índice 8 (0-based) → totais do setor (TOTAL DO SETOR)
+    // Linha 11 = índice 10 (0-based) → status de capacidade (Ocupação do Setor)
     // Garante que o array tem linhas suficientes
-    if (dados.length < 13) {
-      return { ok: false, erro: 'Aba Capacidade incompleta — esperadas ao menos 13 linhas.' };
+    if (dados.length < 11) {
+      return { ok: false, erro: 'Aba Capacidade incompleta — esperadas ao menos 11 linhas.' };
     }
 
-    var rowTotais   = dados[9];   // linha 10 (0-based = 9)
-    var rowStatus   = dados[12];  // linha 13 (0-based = 12)
+    var rowTotais   = dados[8];   // linha 9 (0-based = 8)
+    var rowStatus   = dados[10];  // linha 11 (0-based = 10)
 
     // Extrai valores calculados pelas fórmulas da planilha
     // col D (índice 3) = total de pontos; col E (índice 4) = teto
     var totalPts = Number(rowTotais[3]) || 0;
-    var tetoPts  = Number(rowTotais[4]) || 40;  // fallback 40 (4 serv × 10)
+    var tetoPts  = Number(rowTotais[4]) || 32;  // fallback 32 (4 serv × 8)
     var pct      = tetoPts > 0 ? totalPts / tetoPts : 0;
 
     // col B (índice 1) pode ter o % já calculado pela planilha; usa como cross-check
@@ -1311,7 +2410,7 @@ function getCapacidade() {
 
     var retorno = {
       ok:       true,
-      pct:      Math.round(pct * 100),  // inteiro 0-100 para facilitar o JS do painel
+      pct:      Math.round(pct * 100),
       nivel:    nivel,
       mensagem: mensagem,
       totalPts: totalPts,

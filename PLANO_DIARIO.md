@@ -1,5 +1,111 @@
 # Plano de Trabalho — Dashboard Cronograma de Contratações CPII
-> Atualizado em: 08/05/2026 (tarde) — fix KPI Andamento + plano de automação de capacidade aprovado.
+> Atualizado em: 12/05/2026 — aba Capacidade recriada (v3) + Codigo.gs adaptado; aguarda publicação no GAS.
+
+---
+
+## 📌 SESSÃO 12/05/2026 — Aba Capacidade recriada + Codigo.gs adaptado [AGUARDA PUBLICAÇÃO]
+
+### ✅ IMPLEMENTADO NESTA SESSÃO
+
+**Decisão de arquitetura:**
+- Abordagem de migração via código (`prepararAutomacaoCapacidade`, `prepararMigracaoCapacidade`, `aplicarMigracaoCapacidade`) descartada — modificar estrutura da planilha por código é frágil e causou falhas.
+- Nova abordagem: aba Capacidade com estrutura definitiva e fixa; código apenas lê e escreve dados.
+
+**Planilha: `CronogramaContratacoes_CPII_v3.xlsx`** (salva em `Dashboard - LIC/`)
+- Aba `📊 Capacidade` completamente recriada com estrutura definitiva:
+  - Resumo por servidor (linhas 6–9): SUMIFS filtrando `$D$19:$D$300,"Sim"` (coluna D = Ativo)
+  - Total do setor (linha 10): SUM dos resumos
+  - Status do setor (linha 13): % e nível calculados por fórmula
+  - Cabeçalho do registro (linha 17): Servidor, Processo/Objeto, ProcessoID, Ativo, Modalidade, Fase da Carga, pts (Mod/Nat/Sess/Outros), Total
+  - Linha 18: aviso/instrução (não é dado)
+  - Linhas 19–28: 10 processos atuais já preenchidos com ProcessoID e Ativo=Sim
+  - Linhas 29–34: linhas em branco para novos processos
+- Colunas amarelas = editáveis manualmente; azul claro = gerenciadas pelo código
+
+**`AppsScript_Codigo.gs` — alterações:**
+1. Menu simplificado: submenu Capacidade agora tem: **Migrar processos atuais** + Sincronizar capacidade + Concluir processo.
+2. `capFindHeaderRow_()`: critério aprimorado — busca linha com ProcessoID + Servidor + Total (antes buscava só Servidor + Total, retornando a linha do resumo em vez do registro).
+3. `capGetInfo_()`: `dataStartRow = headerRow + 2` (linha 18 é aviso, dados começam na 19).
+4. `capGetInfo_()`: aliases de pts adicionados — `Mod (pts)`, `Nat (pts)`, `Sess (pts)`, `Outros (pts)`.
+5. Constantes atualizadas: `CAP_HEADER_ROW_FALLBACK = 17`, `CAP_DATA_START_ROW_FALLBACK = 19`.
+6. Truncamento corrigido: `getCapacidade()` estava cortada no meio — função restaurada ao final do arquivo.
+
+**Verificação:** balanceamento de chaves/parênteses = ✅ OK (depth final 0).
+
+### ⚠️ AÇÕES NECESSÁRIAS PARA PUBLICAR
+1. Importar `CronogramaContratacoes_CPII_v3.xlsx` no Google Drive (substituir a planilha atual).
+2. Colar `AppsScript_Codigo.gs` atualizado no GAS e salvar.
+3. Implantar → Nova versão.
+4. **Conferir os 10 processos na aba Capacidade** — validar ProcessoID, Ativo=Sim, pontuações.
+5. Ajustar "Outros (fixo)" dos servidores se necessário (Amanda=3, Samuel=2 pré-preenchidos).
+
+**Nova função `migrarCapacidadeAtual()`:**
+- Preenche ProcessoID nas linhas sem PID (cruza pelo nome do objeto com a aba Processos).
+- Para cada Pregão com apenas linha interna: cria linha de fase externa com Ativo=Não e servidor=REVISAR.
+- Preserva todas as pontuações existentes — não recalcula nada.
+- Processos sem servidor ou com IGOR ficam com servidor=REVISAR na linha externa.
+- Idempotente: ignora linhas que já têm fase externa definida.
+
+### 🧭 FLUXO DE USO DA CAPACIDADE (pós-publicação)
+- **Novo processo:** `novoProcesso()` → insere linha(s) no registro automaticamente com ProcessoID + Ativo=Sim.
+- **Virada de fase (Pregão):** menu Capacidade → Sincronizar capacidade → atualiza Ativo das linhas interna/externa.
+- **Processo concluído:** menu Capacidade → Concluir processo → marca Ativo=Não (linha permanece, histórico preservado, SUMIFS exclui da soma automaticamente).
+- **Edição manual:** colunas amarelas (◄) são sempre editáveis; ProcessoID/Ativo/Fase da Carga são gerenciados pelo código.
+
+---
+
+## 📌 SESSÃO 10/05/2026 — Automação de Capacidade por Processo [DESCARTADA — substituída pela sessão 12/05]
+
+### ✅ IMPLEMENTADO NESTA SESSÃO (`Web app/AppsScript_Codigo.gs`)
+
+**Menu novo "Capacidade" dentro do menu `📊 Painel SEL`:**
+- `Preparar automacao`
+- `Preparar migracao`
+- `Aplicar migracao`
+- `Sincronizar capacidade`
+- `Concluir processo`
+
+**`novoProcesso()` ampliado:**
+- Modalidades agora separadas: Dispensa Eletrônica, Inexigibilidade, Pregão Eletrônico e Concorrência.
+- Pregão exige responsável interno e responsável externo diferentes.
+- Demais modalidades usam um responsável único; responsável externo fica conceitualmente como `N/A`.
+- Pergunta apenas categorias simples (natureza do objeto, IRP quando aplicável e sessão externa); a matriz calcula os pontos automaticamente.
+- Preenche automaticamente `Agente Responsável` nas etapas 1–7 e etapa 8.
+- Registra linhas na aba `📊 Capacidade`:
+  - Pregão: linha interna ativa + linha externa inativa.
+  - Demais modalidades: uma linha única ativa.
+- Adiciona nota nas células de servidor/total explicando a pontuação da linha.
+
+**Setup e migração de capacidade:**
+- `prepararAutomacaoCapacidade()` adiciona colunas necessárias sem duplicar e troca o resumo por servidor para `SUMIFS`, somando apenas `Ativo = "Sim"`.
+- `prepararMigracaoCapacidade()` gera a aba `Previa Migracao Capacidade` sem apagar nada.
+- Quando já houver linhas preenchidas na aba Capacidade, a prévia reaproveita essas linhas como fonte principal, preservando servidor, pontuações, fase e observação; o código tenta vincular o `Processo / Objeto` ao `ProcessoID` da aba Processos.
+- `aplicarMigracaoCapacidade()` importa apenas linhas marcadas como `Aplicar? = Sim`, ignorando `REVISAR`.
+- `sincronizarCapacidade()` altera somente `Ativo` conforme etapas:
+  - Pregão: etapa 7 concluída desativa interna e ativa externa.
+  - Carga única permanece ativa até conclusão.
+  - Processo concluído no escopo SEL desativa a carga.
+- `concluirProcesso()` desativa a carga de um `ProcessoID`.
+- `invalidarCache()` agora limpa também o cache de capacidade (`dados_capacidade`).
+
+### ⚠️ AÇÕES NECESSÁRIAS ANTES DE RODAR A MIGRAÇÃO
+1. Colar o `AppsScript_Codigo.gs` atualizado no GAS e salvar.
+2. Na aba `📊 Capacidade`, trocar categorias genéricas por nomes de processos onde ainda estiver genérico demais.
+3. Usar apenas nomes atuais: `AMANDA`, `BEATRIZ`, `BRUNO`, `SAMUEL`.
+4. Remover/ignorar `IGOR`; se ele aparecer sozinho, o processo deve ser revisado manualmente.
+5. Conferir se os objetos/processos estão com nomenclatura clara para facilitar vínculo automático com `ProcessoID`.
+
+### 🧭 ORDEM SEGURA PARA USAR
+1. Rodar `📊 Painel SEL → Capacidade → Preparar automacao`.
+2. Rodar `Preparar migracao`.
+3. Conferir a aba `Previa Migracao Capacidade`, ajustando responsáveis, classificações/pontos herdados quando necessário, `Ativo` e `Aplicar?`.
+4. Rodar `Aplicar migracao`.
+5. Conferir o KPI de capacidade e as notas das células.
+6. Só depois apagar as linhas antigas por categoria da aba Capacidade.
+7. Rodar `Sincronizar capacidade` quando quiser atualizar viradas/conclusões.
+
+### ✅ VERIFICAÇÃO LOCAL
+- `node --check` executado sobre `AppsScript_Codigo.gs` via stdin: sem erro de sintaxe.
 
 ---
 
