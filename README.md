@@ -1,179 +1,152 @@
-# Painel de Contratações CPII
+# Sistema de Contratações CPII
 
-Sistema de monitoramento do cronograma de contratações públicas desenvolvido para a Seção de Licitações da Reitoria do Colégio Pedro II (DECOF/LIC). O projeto combina uma planilha automatizada no Google Sheets com um painel web em Google Apps Script para acompanhar prazos, etapas, atrasos, capacidade da equipe e situação geral dos processos de contratação.
+Sistema em Google Sheets + Google Apps Script para acompanhar processos de contratação, prazos, capacidade da equipe e avisos automáticos por e-mail no âmbito do Colégio Pedro II.
 
-> Projeto concebido para uso institucional no CPII, com arquitetura simples, sem custo adicional de licenças e adaptável por outras unidades/campi.
+O projeto foi criado para o Setor de Licitações da Reitoria, mas a estrutura foi pensada para que outros campi e unidades possam adaptar o modelo à sua realidade, sem banco de dados externo e sem custo adicional de licença.
 
-## O que o projeto faz
+## Visão Geral
 
-O painel transforma a planilha de controle de contratações em uma visão gerencial interativa, permitindo que a equipe e os setores requisitantes acompanhem o andamento dos processos com mais transparência.
+O sistema tem dois módulos principais:
 
-Principais recursos:
+| Módulo | Arquivos | Uso |
+|---|---|---|
+| App interno de gestão de etapas | `Web app/AppSEL_Codigo.gs` + `Web app/AppSEL_index.html` | Uso da equipe do SEL para fila, etapas, responsáveis, capacidade, histórico, configuração e e-mails |
+| Painel público/Gantt | `Web app/AppsScript_Codigo_v3.gs` + `Web app/AppsScript_index.html` | Consulta gerencial e visualização do cronograma, sem edição direta dos dados |
 
-- Gráfico de Gantt interativo com processos e etapas.
-- Cálculo automático de prazos em dias úteis.
-- Propagação de atrasos em cascata para as etapas seguintes.
-- Registro de data real de conclusão e motivo do atraso.
-- Indicadores de processos em andamento, atrasados, em planejamento e concluídos.
-- Filtros por status, modalidade, ano e busca textual.
-- Cadastro guiado de novos processos pela própria planilha.
-- Detector automático de atraso via trigger do Google Apps Script.
-- Indicador de capacidade do setor com matriz de complexidade.
-- Planilha-modelo documentada para replicação em outras unidades.
+A planilha funciona como base de dados. O Apps Script lê e atualiza as abas da planilha, calcula prazos em dias úteis, publica a interface web e executa os gatilhos automáticos.
 
-## Por que ele foi criado
+## Principais Recursos
 
-A Portaria CPII nº 638/2026 estabeleceu prazos formais para as etapas da fase interna de contratações. O acompanhamento manual desses prazos em planilhas convencionais gerava risco de erro, retrabalho e pouca visibilidade para os setores requisitantes.
+- Controle de processos por etapa, fase, modalidade, setor requisitante e responsável.
+- Fila de processos ainda não iniciados, com simulação de D0 e previsão das etapas.
+- Cálculo de prazos em dias úteis, com propagação de atrasos para as etapas seguintes.
+- Troca de responsável por processo, incluindo separação entre fase interna e fase externa.
+- Transição automática da fase interna para a fase externa quando aplicável.
+- Registro de conclusão, motivo de atraso, status sem conclusão e histórico.
+- Aba de capacidade por servidor, com pontuação guiada por complexidade.
+- Gestão da equipe do setor na própria aba Config.
+- Cadastro de e-mails de servidores e setores requisitantes.
+- Avisos automáticos por e-mail para prazo próximo e etapa vencida.
+- Painel público/Gantt para acompanhamento institucional.
 
-Este projeto nasceu para resolver esse problema com uma solução baseada em ferramentas já disponíveis no Google Workspace institucional:
+## Regras Atuais de E-mail
 
-- Google Sheets como base de dados editável pela equipe.
-- Google Apps Script como back-end, automação e publicação web.
-- HTML, CSS e JavaScript para o painel público.
+Os avisos são enviados pela função `enviarAvisosPrazo()` no Apps Script.
 
-## Arquitetura
+- Horário padrão: por volta de **10h30**, no fuso horário do projeto Apps Script.
+- Antecedência: etapas com prazo nos próximos **3 dias úteis**.
+- Etapas vencidas: avisadas quando a data final da etapa já passou e ela não foi concluída.
+- Processos concluídos ou ainda em planejamento não geram e-mail.
+- Processos suspensos/paralisados não geram e-mail.
+- Processos em `Aguardando requisitante` enviam aviso somente ao setor requisitante, se houver `EmailRequisitante` cadastrado.
+- Processos em andamento enviam para servidor responsável, chefia e setor requisitante cadastrado.
+- Processos sob responsabilidade da chefia enviam para chefia e setor requisitante cadastrado.
+- Se o e-mail do destinatário obrigatório não estiver cadastrado, aquele envio é ignorado.
 
-```mermaid
-flowchart LR
-  A["Google Sheets<br>Planilha de processos e etapas"] --> B["Google Apps Script<br>AppsScript_Codigo.gs"]
-  B --> C["Painel Web<br>AppsScript_index.html"]
-  B --> D["Triggers<br>atualização diária e detector de atraso"]
-  A --> E["Aba Capacidade<br>matriz de complexidade"]
-```
+Depois de publicar uma nova versão do AppSEL, entre na aba **Config** e use **Reinstalar trigger** para atualizar o gatilho e registrar os metadados de horário/fuso. O Apps Script não garante o minuto exato do disparo, mas `atHour(10).nearMinute(30)` orienta o envio para a janela das 10h30.
 
-## Estrutura do repositório
+## Estrutura do Repositório
 
 ```text
 .
 ├── README.md
-├── Nota_tecnica_Painel_CPII_v4.docx
-├── Guia_Rapido_Painel_SEL.docx
-├── PLANO_DIARIO.md
-└── Web app/
-    ├── AppsScript_Codigo.gs
-    ├── AppsScript_index.html
-    ├── CronogramaContratacoes_CPII_Final_v2.xlsx
-    └── Logo cpii.jpg
+├── Web app/
+│   ├── AppSEL_Codigo.gs
+│   ├── AppSEL_index.html
+│   ├── AppsScript_Codigo_v3.gs
+│   ├── AppsScript_index.html
+│   ├── CronogramaContratacoes_CPII (9).xlsx
+│   └── PLANO_DIARIO (1).md
+└── Nota_tecnica_Painel_CPII_v4.docx
 ```
 
-Arquivos principais:
+Arquivos de planilha, documentos e nomes podem variar entre versões locais. Antes de publicar no GitHub, revise dados reais, links internos, e-mails pessoais e documentos administrativos que não devam ficar públicos.
 
-- `Web app/AppsScript_Codigo.gs`: back-end do Google Apps Script. Lê a planilha, calcula datas, status, atrasos, capacidade e cria menus/triggers.
-- `Web app/AppsScript_index.html`: interface web do painel Gantt.
-- `Web app/CronogramaContratacoes_CPII_Final_v2.xlsx`: modelo de planilha para importação no Google Sheets.
-- `Nota_tecnica_Painel_CPII_v4.docx`: nota técnica com fundamentação, histórico, impacto institucional e enquadramento do projeto.
-- `Guia_Rapido_Painel_SEL.docx`: guia operacional para a equipe usuária.
+## Abas da Planilha
 
-## Como implantar
+As abas centrais esperadas pelo AppSEL são:
 
-1. Faça upload da planilha `CronogramaContratacoes_CPII_Final_v2.xlsx` para o Google Drive da unidade.
-2. Abra o arquivo no Google Sheets e confirme se as abas foram importadas corretamente.
-3. Na planilha, acesse **Extensões > Apps Script**.
-4. Cole o conteúdo de `AppsScript_Codigo.gs` no arquivo principal do Apps Script.
-5. Crie um arquivo HTML chamado `index` e cole o conteúdo de `AppsScript_index.html`.
-6. Salve o projeto.
-7. Publique em **Implantar > Nova implantação > App da Web**.
-8. Ajuste a função `abrirPainel()` em `AppsScript_Codigo.gs` com a URL publicada do seu Web App.
-9. Reabra a planilha e use o menu **Painel SEL** para instalar:
-   - trigger diário de atualização;
-   - detector automático de atraso.
+| Aba | Finalidade |
+|---|---|
+| `Processos` | Dados gerais do processo, como `ProcessoID`, `N° SUAP`, objeto, modalidade, D0, setor requisitante, e-mail do requisitante e link SUAP |
+| `Etapas` | Etapas do cronograma, fase, agente responsável, prazo, status, motivo de atraso e data de realização |
+| `Capacidade` | Carga por servidor, fase, processo ativo, modalidade e pontuação |
+| `ConfigSEL` | Aba auxiliar criada/atualizada pelo sistema para persistir equipe e configurações úteis ao painel |
+| `Histórico` | Registro auxiliar de alterações e justificativas |
 
-## Como usar a planilha
+O código localiza muitas colunas pelo nome do cabeçalho. Ao adaptar para outro campus, preserve os nomes principais das colunas ou ajuste o código correspondente.
 
-A equipe deve editar apenas as células marcadas com `◄ EDITAR`.
+## Implantação do App Interno
 
-Abas principais:
+1. Abra a planilha no Google Sheets.
+2. Acesse **Extensões > Apps Script**.
+3. Atualize o arquivo principal com o conteúdo de `Web app/AppSEL_Codigo.gs`.
+4. Crie ou atualize o arquivo HTML `index` com o conteúdo de `Web app/AppSEL_index.html`.
+5. Salve o projeto.
+6. Publique em **Implantar > Gerenciar implantações > Nova versão**.
+7. Abra o Web App publicado.
+8. Na aba **Config**, cadastre a equipe, revise os e-mails e instale ou reinstale o trigger diário.
+9. Use **Testar e-mail** para validar permissões do `MailApp` e o e-mail do usuário logado.
 
-- `📋 Instruções`: manual interno da planilha.
-- `Matriz de Pontuação`: critérios de complexidade usados no cálculo de capacidade.
-- `📊 Capacidade`: registro de carga por servidor e processos ativos.
-- `🏛 Processos`: dados gerais de cada contratação.
-- `🗓 Etapas`: etapas, prazos, status, data real e motivo de atraso.
-- `Prioridades GUT`: priorização interna da chefia, não exibida no painel público.
+## Implantação do Painel Público
 
-Campos essenciais na aba `Processos`:
+O painel público usa os arquivos `AppsScript_Codigo_v3.gs` e `AppsScript_index.html`. Ele deve ser mantido separado do AppSEL quando a unidade quiser oferecer uma visualização de consulta sem recursos internos de edição.
 
-- `ProcessoID`
-- `N° SUAP`
-- `Objeto`
-- `Modalidade`
-- `D0 (Data Abertura)`
-- `Link SUAP`
-- `Tem IRP?`
-- `Status`
+Ao publicar o painel público, revise:
 
-Campos editáveis na aba `Etapas`:
+- Nome da unidade e textos institucionais.
+- Logotipo e identidade visual.
+- URL do Web App.
+- Regras de acesso da implantação.
+- Dados sensíveis que possam aparecer na consulta pública.
 
-- `DataRealizacao◄ EDITAR`
-- `MotivoAtraso ◄ EDITAR`
-- `StatusEtapa ◄ EDITAR`
+## Como Adaptar Para Outro Campus
 
-## Como adaptar para outra unidade do CPII
+1. Duplique a planilha-modelo e substitua os dados de exemplo pelos processos da unidade.
+2. Configure a equipe local na aba **Config** do AppSEL.
+3. Cadastre e-mails de chefia, servidores e setores requisitantes.
+4. Revise modalidades, etapas e prazos usados pelo campus.
+5. Ajuste feriados locais, se necessário.
+6. Publique o AppSEL e reinstale o trigger.
+7. Publique o painel público apenas se a unidade quiser uma consulta separada.
+8. Faça testes com processo fictício antes de usar com dados reais.
 
-O projeto foi pensado para ser reaproveitado por outras unidades/campi com poucos ajustes.
+## Segurança e Publicação no GitHub
 
-### 1. Copiar a planilha-modelo
+Para compartilhar este projeto publicamente:
 
-Crie uma cópia da planilha e substitua os dados de exemplo pelos processos da sua unidade. Mantenha os nomes dos cabeçalhos, pois o código localiza as colunas pelo texto.
+- Remova ou anonimize números reais de processo, links internos do SUAP, e-mails pessoais e justificativas sensíveis.
+- Evite publicar planilhas com dados operacionais reais.
+- Prefira manter uma planilha-modelo com exemplos fictícios.
+- Revise documentos `.docx`, imagens e anexos antes de subir ao repositório.
+- Use as permissões do Google Apps Script conforme a política da unidade: restrito à organização ou aberto apenas quando houver autorização institucional.
 
-Antes de publicar em repositório público, revise a planilha e remova ou anonimize dados sensíveis, como números de processo, links internos, nomes, matrículas e justificativas reais de atraso.
+## Ferramentas Opcionais Para E-mail
 
-### 2. Ajustar identidade visual e contatos
+O envio atual usa `MailApp.sendEmail()` com HTML inline, que é gratuito dentro do Google Apps Script e suficiente para os avisos do SEL.
 
-No arquivo `AppsScript_index.html`, revise:
+Para melhorar a montagem visual dos e-mails sem contratar serviço pago, a unidade pode avaliar:
 
-- nome da unidade no cabeçalho;
-- chip institucional, hoje configurado como `DECOF-LIC`;
-- endereço no rodapé;
-- ramais;
-- e-mail;
-- links institucionais do topo;
-- logotipo, se a unidade quiser usar outra imagem.
+- **MJML**: gera HTML responsivo a partir de uma sintaxe mais simples.
+- **Beefree/RGE Studio** ou **Stripo Free**: editores visuais para desenhar modelos e exportar HTML.
+- **Google Docs**: pode servir como rascunho de texto institucional, com posterior adaptação manual para HTML.
 
-### 3. Ajustar parâmetros do cronograma
+Mesmo usando editor externo, o HTML final deve ser simples e com estilos inline para funcionar bem no Gmail e em outros clientes.
 
-No arquivo `AppsScript_Codigo.gs`, revise:
+## Estado Atual
 
-- `ANO_BASE`, caso o painel seja usado em outro exercício;
-- `faseExternaDias()`, se os prazos externos forem alterados;
-- `FERIADOS_FIXOS`, caso a unidade queira ampliar a lista de feriados;
-- etapas padrão dentro de `novoProcesso()`, se o fluxo local tiver diferenças;
-- `abrirPainel()`, para apontar para a URL publicada da nova unidade.
+A versão atual prioriza o AppSEL como ferramenta de trabalho diária da equipe. O painel público permanece como módulo de consulta e referência visual.
 
-### 4. Ajustar capacidade do setor
+As melhorias mais recentes incluem:
 
-Na aba `📊 Capacidade`, substitua os nomes dos servidores e os valores fixos conforme a equipe local. A lógica atual usa teto individual de 10 pontos por servidor, mas a matriz pode ser ajustada pela chefia se a unidade adotar outro critério.
-
-### 5. Publicar e testar
-
-Depois de publicar o Web App:
-
-- abra o painel pelo link;
-- confira se os processos aparecem;
-- teste filtros e expansão de etapas;
-- cadastre um processo fictício;
-- preencha uma `DataRealizacao`;
-- confirme se o detector de atraso registra o motivo corretamente;
-- instale os triggers pelo menu da planilha.
-
-## Observações importantes
-
-- O sistema não depende de banco de dados externo.
-- O painel lê os dados diretamente da planilha vinculada ao Apps Script.
-- O cálculo de prazo usa dias úteis, excluindo fins de semana e feriados nacionais fixos cadastrados no código.
-- Feriados móveis e feriados locais podem ser incluídos futuramente.
-- O Web App pode ser publicado com acesso restrito à organização ou aberto conforme a política institucional da unidade.
-
-## Base normativa e institucional
-
-O projeto foi desenvolvido considerando:
-
-- Constituição Federal de 1988, art. 37;
-- Lei nº 14.133/2021;
-- Decreto nº 10.947/2022;
-- Portaria CPII nº 638/2026;
-- Lei nº 9.784/1999;
-- Lei nº 15.367/2026, no contexto de reconhecimento de saberes e competências.
+- Trigger persistente com status visível na Config.
+- Horário de envio ajustado para 10h30.
+- Botão de teste de e-mail.
+- Regras de envio por status do processo.
+- E-mails com prazo em formato brasileiro.
+- Referência do processo por N° SUAP/link, evitando expor `ProcessoID` ao usuário.
+- Banner de atenção mais simples na aba Etapas.
+- Correção visual da pontuação guiada quando opções diferentes têm a mesma pontuação.
 
 ## Autoria
 
@@ -186,7 +159,3 @@ Validação técnica:
 
 **Amanda Carla Faria de Almeida**  
 Chefe - DECOF/LIC/CPII
-
-## Status do projeto
-
-O sistema está pronto para uso como referência técnica e pode ser adaptado por outras unidades do Colégio Pedro II. Para publicação pública no GitHub, recomenda-se revisar previamente os arquivos de dados e documentos anexos, mantendo no repositório apenas informações que possam ser divulgadas externamente.

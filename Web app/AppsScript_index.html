@@ -522,6 +522,217 @@ body{display:flex;flex-direction:column;background:var(--bg);color:var(--text);f
 .sk-bar-cell { flex: 1; padding: 0 8px; }
 .sk-bar    { height: 20px; border-radius: 4px; }
 
+/* ══════════════════════════════════════════════════════════════
+   MOBILE — cards expansíveis (visível em telas ≤ 768px)
+   O Gantt split-panel é ocultado; a lista de cards substitui.
+   ══════════════════════════════════════════════════════════════ */
+#mobile-list { display: none }
+.mob-modal-filter { display: none !important } /* oculto no desktop; media query ativa no mobile */
+
+/* ── Cards de processo ── */
+.mob-card {
+  background: var(--s1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(30,78,140,.07);
+}
+.mob-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.mob-card-header:active { background: var(--s2); }
+.mob-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  white-space: nowrap;
+}
+.mob-badge.b-andamento  { background: rgba(77,166,255,.15); color: var(--accent2); border: 1px solid rgba(77,166,255,.3); }
+.mob-badge.b-atrasado   { background: rgba(176,32,53,.12);  color: var(--danger);  border: 1px solid rgba(176,32,53,.3); }
+.mob-badge.b-ok         { background: rgba(30,122,69,.12);  color: var(--success); border: 1px solid rgba(30,122,69,.3); }
+.mob-badge.b-planejamento{background: rgba(240,165,0,.12);  color: var(--warning); border: 1px solid rgba(240,165,0,.3); }
+.mob-badge.b-aguardando { background: rgba(230,126,34,.15); color: #c0622a;        border: 1px solid rgba(230,126,34,.3); }
+.mob-badge.b-paralisado { background: rgba(142,68,173,.12); color: #7d3c98;        border: 1px solid rgba(142,68,173,.3); }
+.mob-info { flex: 1; min-width: 0; }
+.mob-num  { font-family: var(--mono); font-size: 11px; color: var(--cpii-navy); font-weight: 700; }
+.mob-nome { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mob-prog-wrap { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.mob-pbar { flex: 1; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.mob-pbar-fill { height: 100%; border-radius: 2px; background: var(--accent2); transition: width .3s; }
+.mob-pbar-fill.done { background: var(--success); }
+.mob-pct  { font-family: var(--mono); font-size: 10px; color: var(--muted); white-space: nowrap; }
+.mob-chevron { flex-shrink: 0; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; color: var(--muted); transition: transform .2s; }
+.mob-chevron.open { transform: rotate(180deg); }
+/* ── Etapas expansíveis ── */
+.mob-etapas { display: none; border-top: 1px solid var(--border); }
+.mob-etapas.open { display: block; }
+.mob-etapa {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.mob-etapa:last-child { border-bottom: none; }
+/* Ícone de etapa: ponto colorido (padrão) ou ✓ para concluídas */
+.mob-etapa-dot {
+  flex-shrink: 0;
+  width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  margin-top: 1px;
+  font-size: 14px;
+}
+.mob-etapa-dot.c-ok    { color: var(--success); }
+.mob-etapa-dot.c-and   { color: var(--accent2); }
+.mob-etapa-dot.c-atra  { color: var(--danger); }
+.mob-etapa-dot.c-plan  { color: var(--border2); }
+.mob-etapa-dot.c-agu   { color: #e67e22; }
+.mob-etapa-dot.c-par   { color: #7d3c98; }
+.mob-etapa-dot.c-na    { color: var(--border2); }
+.mob-etapa-body { flex: 1; min-width: 0; }
+.mob-etapa-nome { font-weight: 600; color: var(--text2); }
+.mob-etapa-status { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.mob-etapa-motivo { font-size: 11px; color: var(--danger); margin-top: 2px; font-style: italic; }
+
+/* ── Menu flutuante de links (mobile pequeno) ── */
+.mob-links-btn {
+  display: none; /* visível apenas no mobile via media query */
+  background: rgba(201,162,42,.15);
+  border: 1px solid rgba(201,162,42,.4);
+  color: var(--cpii-gold);
+  font-size: 16px;
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.mob-links-menu {
+  display: none;
+  position: fixed;
+  top: 56px; right: 10px;
+  background: var(--s1);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.18);
+  z-index: 500;
+  padding: 6px 0;
+  min-width: 210px;
+}
+.mob-links-menu.open { display: block; }
+.mob-links-menu a {
+  display: block;
+  padding: 11px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text2);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border);
+}
+.mob-links-menu a:last-child { border-bottom: none; }
+.mob-links-menu a:active { background: var(--s2); }
+
+/* Filtro de modalidade (mobile) */
+.mob-modal-filter { display: flex; gap: 8px; padding: 8px 12px; background: var(--s1); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.mob-modal-btn {
+  flex: 1; padding: 8px 4px; border-radius: 10px; font-size: 12px; font-weight: 700;
+  border: 1px solid var(--border); background: var(--s2); color: var(--muted);
+  cursor: pointer; text-align: center; letter-spacing: .3px; min-height: 44px;
+  transition: all .15s; text-transform: uppercase;
+}
+.mob-modal-btn.active-pe  { background: rgba(30,78,140,.12); color: var(--cpii-blue); border-color: var(--cpii-blue); }
+.mob-modal-btn.active-cd  { background: rgba(201,162,42,.12); color: var(--cpii-gold); border-color: var(--cpii-gold); }
+.mob-modal-btn.active-all { background: rgba(30,78,140,.06); color: var(--accent2); border-color: var(--accent2); }
+
+@media (max-width: 768px) {
+  /* body: permitir scroll vertical na página toda */
+  body { overflow: auto; }
+  /* Ocultar Gantt desktop, mostrar lista mobile */
+  .main { display: none !important; }
+  #mobile-list { display: block; padding: 10px 12px 40px; }
+
+  /* KPI "Em Andamento" → só "Andamento" no mobile */
+  .kpi-lbl-prefix { display: none; }
+  /* Ocultar elementos que só fazem sentido com o Gantt */
+  .fg:has(.escala-group) { display: none; }  /* bloco Escala */
+  .legenda-bar { display: none; }             /* legenda de cores */
+  .mob-modal-filter { display: flex !important; } /* filtro de modalidade mobile */
+
+  /* Header compacto */
+  .top-bar { height: auto; min-height: 50px; padding: 8px 12px; flex-wrap: nowrap; gap: 6px; }
+  .brand-chip { display: none; }
+  .brand-title { font-size: 12px; }
+  .brand-inst  { font-size: 10px; }
+  .brand-logo  { height: 32px; width: 32px; }
+  .top-meta    { font-size: 11px; padding: 2px 6px; }
+  .btn-refresh { font-size: 11px; padding: 4px 8px; }
+
+  /* KPIs: 3 colunas × 2 linhas */
+  .kpi-strip { grid-template-columns: repeat(3, 1fr); padding: 8px 12px; gap: 8px; }
+  .kpi { padding: 6px 10px; }
+  .kpi-val { font-size: 20px; }
+  .kpi-lbl { font-size: 10px; }
+  .kpi-sub { display: none; }
+  .kpi-icon { width: 22px; height: 22px; }
+
+  /* Filtros: empilhados, sem bloco de escala */
+  .filter-bar { flex-direction: column; align-items: stretch; padding: 8px 12px; gap: 8px; }
+  .fi { min-width: unset; width: 100%; }
+  .status-filter-group { flex-wrap: wrap; }
+  .status-btn { flex: 1; text-align: center; padding: 8px 4px; font-size: 11px; min-width: 60px; min-height: 44px; }
+  .ano-select { width: 100%; padding: 8px 28px 8px 12px; min-height: 44px; }
+  .last-update { margin-left: 0; font-size: 11px; }
+
+  /* Status banner */
+  .status-banner { font-size: 10px; padding: 8px 12px; }
+
+  /* Footer: oculto no mobile */
+  .footer { display: none; }
+}
+
+/* Telas muito pequenas (≤ 420px — Galaxy S8+, etc.) */
+@media (max-width: 420px) {
+  /* Links do header → ocultar individualmente, mostrar botão flutuante */
+  .top-meta-link { display: none; }
+  .mob-links-btn { display: flex; }
+
+  /* Header: marca + botões de ação apenas */
+  .top-bar { padding: 6px 10px; }
+  .brand-logo { height: 28px; width: 28px; }
+  .brand-title { font-size: 11px; }
+  .brand-inst  { font-size: 9px; }
+
+  /* KPIs ainda menores */
+  .kpi-strip { gap: 5px; padding: 6px 8px; }
+  .kpi { padding: 5px 6px; }
+  .kpi-val { font-size: 17px; }
+  .kpi-lbl { font-size: 9px; letter-spacing: .4px; }
+  .kpi-icon { width: 18px; height: 18px; }
+
+  /* Filtros mais compactos */
+  .filter-bar { padding: 6px 8px; gap: 6px; }
+  .status-btn { font-size: 10px; padding: 7px 2px; }
+
+  /* Cards mobile */
+  #mobile-list { padding: 8px 8px 40px; }
+  .mob-card-header { padding: 10px 10px; gap: 8px; }
+  .mob-nome { font-size: 13px; }
+  .mob-num  { font-size: 10px; }
+  .mob-badge { font-size: 9px; padding: 2px 6px; }
+  .mob-etapa { padding: 8px 10px; font-size: 12px; }
+}
 </style>
 </head>
 <body>
@@ -538,9 +749,18 @@ body{display:flex;flex-direction:column;background:var(--bg);color:var(--text);f
     <span class="brand-chip">DECOF-LIC</span>
   </div>
   <div class="top-right">
-    <a class="top-meta" href="https://suap.cp2.g12.br/documento_eletronico/visualizar_documento_digitalizado/944690/" target="_blank" title="Abrir Portaria 638/2026 no SUAP">📄 Portaria 638/2026</a>
-    <a class="top-meta" href="https://decofcp2-afk.github.io/proad-fluxos/" target="_blank" title="Abrir fluxos internos da PROAD">🔗 Fluxos PROAD</a>
+    <a class="top-meta top-meta-link" href="https://suap.cp2.g12.br/documento_eletronico/visualizar_documento_digitalizado/944690/" target="_blank" title="Abrir Portaria 638/2026 no SUAP">📄 Portaria 638/2026</a>
+    <a class="top-meta top-meta-link" href="https://decofcp2-afk.github.io/proad-fluxos/" target="_blank" title="Abrir fluxos internos da PROAD">🔗 Fluxos PROAD</a>
+    <a class="top-meta top-meta-link" href="https://portalespiral.cp2.g12.br/index.php/materialinstitucional/article/view/4903/2825" target="_blank" title="Manual POP — Procedimentos Operacionais Padrão">📋 POP</a>
+    <!-- Ícone flutuante de links — visível apenas no mobile pequeno (≤ 420px) -->
+    <button class="mob-links-btn" id="mob-links-btn" onclick="toggleMobLinks()" title="Links úteis">🔗</button>
   </div>
+</div>
+<!-- Menu flutuante de links para mobile pequeno -->
+<div class="mob-links-menu" id="mob-links-menu">
+  <a href="https://suap.cp2.g12.br/documento_eletronico/visualizar_documento_digitalizado/944690/" target="_blank" onclick="closeMobLinks()">📄 Portaria 638/2026</a>
+  <a href="https://decofcp2-afk.github.io/proad-fluxos/" target="_blank" onclick="closeMobLinks()">🔗 Fluxos PROAD</a>
+  <a href="https://portalespiral.cp2.g12.br/index.php/materialinstitucional/article/view/4903/2825" target="_blank" onclick="closeMobLinks()">📋 POP</a>
 </div>
 
 <!--
@@ -566,9 +786,9 @@ body{display:flex;flex-direction:column;background:var(--bg);color:var(--text);f
 <!-- KPIs -->
 <div class="kpi-strip">
   <div class="kpi tot"><div class="kpi-header"><div class="kpi-lbl" style="font-size: 11px">Total de Processos</div><svg class="kpi-icon" viewBox="0 0 24 24" fill="none" stroke="#1e4e8c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="4" x2="8" y2="9"/><line x1="16" y1="4" x2="16" y2="9"/></svg></div><div class="kpi-val" id="kv-tot">—</div><div class="kpi-sub" style="font-size: 12px">exercício ativo</div></div>
-  <div class="kpi and"><div class="kpi-header"><div class="kpi-lbl" style="font-size: 11px">Em Andamento</div><svg class="kpi-icon" viewBox="0 0 24 24" fill="none" stroke="#1e7a45" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><div class="kpi-val" id="kv-and">—</div><div class="kpi-sub" style="font-size: 12px">fase interna / externa</div></div>
+  <div class="kpi and"><div class="kpi-header"><div class="kpi-lbl" style="font-size: 11px"><span class="kpi-lbl-prefix">Em </span>Andamento</div><svg class="kpi-icon" viewBox="0 0 24 24" fill="none" stroke="#1e7a45" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><div class="kpi-val" id="kv-and">—</div><div class="kpi-sub" style="font-size: 12px">fase interna / externa</div></div>
   <div class="kpi atra"><div class="kpi-header"><div class="kpi-lbl" style="font-size: 11px">Atrasados</div><svg class="kpi-icon" viewBox="0 0 24 24" fill="none" stroke="#b02035" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><div class="kpi-val" id="kv-atra">—</div><div class="kpi-sub" style="font-size: 12px">≥ 1 etapa fora do prazo</div></div>
-  <div class="kpi plan"><div class="kpi-header"><div class="kpi-lbl" style="font-size: 11px">Fila de Prioridade</div><svg class="kpi-icon" viewBox="0 0 24 24" fill="none" stroke="#4a6b94" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="kpi-val" id="kv-plan">—</div><div class="kpi-sub" style="font-size: 12px">fase interna a iniciar</div></div>
+  <div class="kpi plan"><div class="kpi-header"><div class="kpi-lbl" style="font-size: 11px">Fila de Prioridade</div><svg class="kpi-icon" viewBox="0 0 24 24" fill="none" stroke="#4a6b94" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="kpi-val" id="kv-plan">—</div><div class="kpi-sub" style="font-size: 12px">processos em análise</div></div>
   <div class="kpi conc"><div class="kpi-header"><div class="kpi-lbl" style="font-size: 11px">Concluídos</div><svg class="kpi-icon" viewBox="0 0 24 24" fill="none" stroke="#2ecc71" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div class="kpi-val" id="kv-conc">—</div><div class="kpi-sub" style="font-size: 12px">100% das etapas finalizadas</div></div>
   <!-- KPI Capacidade do Setor — valor e mensagem atualizados por updateCapacidade() -->
   <div class="kpi cap" id="kpi-cap">
@@ -679,6 +899,16 @@ body{display:flex;flex-direction:column;background:var(--bg);color:var(--text);f
     </div><!-- /gantt-body -->
   </div><!-- /gantt-card -->
 </div><!-- /main -->
+
+<!-- FILTRO DE MODALIDADE (mobile) — visível só no mobile via CSS -->
+<div class="mob-modal-filter" id="mob-modal-filter">
+  <button class="mob-modal-btn active-all" data-m="" onclick="setMobModal(this,'')">Todos</button>
+  <button class="mob-modal-btn" data-m="pe" onclick="setMobModal(this,'pe')">Pregão</button>
+  <button class="mob-modal-btn" data-m="cd" onclick="setMobModal(this,'cd')">Contrat. Direta</button>
+</div>
+
+<!-- LISTA MOBILE — visível apenas em telas ≤ 768px; oculta no desktop -->
+<div id="mobile-list"></div>
 
 <!-- FOOTER — fixo na base da página, fora do card -->
 <div class="footer">
@@ -850,7 +1080,7 @@ function carregarDados(forcarAtualizacao) {
         showBanner('error', '⚠ ' + result.erro);
         return;
       }
-      DATA     = result.processos || [];
+      DATA     = ajustarFilaVisual(result.processos || []);
       expanded = {};
 
       var agora = new Date();
@@ -1018,6 +1248,52 @@ function isoToDD_MM_YY(iso) {
  * barX(moIdx, rangeStart) → posição left em px da barra
  *   Mês/Trimestre: (idxMês - rangeStart) × cellW + 4px de respiro
  */
+function idxToISO(idx, fimDoMes) {
+  var y = ANO_BASE + Math.floor(idx / 12);
+  var m = ((idx % 12) + 12) % 12;
+  var d = fimDoMes ? new Date(y, m + 1, 0).getDate() : 1;
+  return y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+
+function isFilaVisual_(p) {
+  return p && (p.d0_simulado === true || (p.status === 'planejamento' && Number(p.execucao || 0) === 0));
+}
+
+function ajustarFilaVisual(data) {
+  var iniBase = todayIdx() + 1;
+  var fimMax = todayIdx() + 8;
+  var filaIdx = 0;
+
+  (data || []).forEach(function(p) {
+    if (!isFilaVisual_(p)) return;
+
+    var ini = iniBase + Math.min(filaIdx, 5);
+    var fim = Math.min(ini + 3, fimMax);
+    filaIdx++;
+
+    p.d0_simulado = true;
+    p.inicio = ini;
+    p.fim = fim;
+    p.ini_iso = idxToISO(ini, false);
+    p.fim_iso = idxToISO(fim, true);
+
+    var etapas = p.etapas || [];
+    var n = etapas.length || 1;
+    etapas.forEach(function(et, i) {
+      var etIni = ini + Math.floor(((fim - ini + 1) * i) / n);
+      var etFim = ini + Math.floor(((fim - ini + 1) * (i + 1) - 1) / n);
+      if (etFim < etIni) etFim = etIni;
+      if (etFim > fim) etFim = fim;
+      et.prazo_ini = et.real_ini = etIni;
+      et.prazo_fim = et.real_fim = etFim;
+      et.ini_iso = idxToISO(etIni, false);
+      et.fim_iso = et.fim_real_iso = idxToISO(etFim, true);
+    });
+  });
+
+  return data || [];
+}
+
 function barX(moIdx, rangeStart) {
   return (moIdx - rangeStart) * getCellW() + 4;
 }
@@ -1443,6 +1719,10 @@ function showProcTT(e, p) {
     ? '<div class="tt-hint">🔍 Clique em <b>+</b> para expandir as etapas</div>'
     : '<div class="tt-hint">💡 Clique em <b>+</b> para ver o cronograma por etapa</div>';
   var corPct = pc === 'bad' ? 'danger' : pc === 'plan' ? 'muted' : 'accent2';
+  var periodoLabel = p.d0_simulado ? 'Previsão exibida' : 'Período';
+  var filaHtml = p.d0_simulado
+    ? '<div class="tt-warn"><b>Fila de prioridade</b>Datas estimadas apenas para visualização. O início real será definido pelo SEL no app de gestão.</div>'
+    : '';
   tt.innerHTML =
     '<div class="tt-head">' + (p.num && p.num.indexOf('SEL-') !== 0 ? 'N° ' + esc(p.num) : esc(p.nome)) + '</div>' +
     '<div class="tt-row"><span class="tt-k">Status</span>' + statusV + '</div>' +
@@ -1451,8 +1731,8 @@ function showProcTT(e, p) {
         '<div class="pbar"><div class="pbar-fill ' + pc + '" style="width:' + p.execucao + '%"></div></div>' +
         '<span class="pbar-pct" style="color:var(--' + corPct + ')">' + p.execucao + '%</span>' +
       '</div></div>' +
-    '<div class="tt-row"><span class="tt-k">Período</span><span class="tt-v">' + isoToDD_MM(p.ini_iso) + ' – ' + isoToDD_MM_YY(p.fim_iso) + '</span></div>' +
-    successHtml + alertHtml + hintHtml +
+    '<div class="tt-row"><span class="tt-k">' + periodoLabel + '</span><span class="tt-v">' + isoToDD_MM(p.ini_iso) + ' – ' + isoToDD_MM_YY(p.fim_iso) + '</span></div>' +
+    successHtml + alertHtml + filaHtml + hintHtml +
     '<div class="tt-sep"></div>' +
     '<div class="tt-k" style="font-size:13px;margin-bottom:3px">Link no SUAP</div>' +
     '<a class="tt-link" href="' + esc(p.suap) + '" target="_blank">' + (p.suap === '#' ? '(não configurado)' : esc(p.suap)) + '</a>' +
@@ -1678,6 +1958,35 @@ function setEscala(btn, e) {
 }
 
 /*
+ * salvarFiltros() / restaurarFiltros()
+ * Persistência de filtros entre sessões via sessionStorage.
+ * Ano sempre restaura como '' (Todos) — conforme diretriz de UX.
+ */
+function salvarFiltros() {
+  try {
+    sessionStorage.setItem('sel_status', activeStatus);
+    sessionStorage.setItem('sel_escala', escalaAtiva || 'mes');
+    // Ano NÃO é salvo — sempre abre como "Todos"
+  } catch(e) {}
+}
+function restaurarFiltros() {
+  try {
+    var st = sessionStorage.getItem('sel_status') || '';
+    if (st) {
+      var btn = document.querySelector('.status-btn[data-s="' + st + '"]');
+      if (btn) setStatusFilter(btn, st);
+    }
+    var esc = sessionStorage.getItem('sel_escala') || 'mes';
+    var ebtn = document.querySelector('.escala-btn[data-e="' + esc + '"]');
+    if (ebtn) setEscala(ebtn, esc);
+    // Ano sempre começa como Todos
+    activeAno = '';
+    var sel = document.getElementById('ano-select');
+    if (sel) sel.value = '';
+  } catch(e) {}
+}
+
+/*
  * populateAnoSelect()
  * Lê os anos presentes nos dados e popula o <select> de filtro por ano.
  * Chamada uma única vez após carregar os dados.
@@ -1714,6 +2023,357 @@ function setAnoFilter(val) {
   activeAno = val;
   salvarFiltros();
   applyFilters();
+}
+
+/*
+ * isMobile()
+ * Detecta se a tela atual é mobile (≤ 768px).
+ */
+function isMobile() {
+  return window.innerWidth <= 768;
+}
+
+/* Estado do filtro de modalidade (mobile) */
+var activeMobModal = '';
+
+/*
+ * setMobModal(btn, val)
+ * Filtra os cards mobile por modalidade: '' = todos, 'pe', 'cd'.
+ */
+function setMobModal(btn, val) {
+  activeMobModal = val;
+  document.querySelectorAll('.mob-modal-btn').forEach(function(b) {
+    b.className = 'mob-modal-btn';
+  });
+  btn.classList.add(val === 'pe' ? 'active-pe' : val === 'cd' ? 'active-cd' : 'active-all');
+  applyFilters();
+}
+
+/*
+ * toggleMobLinks() / closeMobLinks()
+ * Abre/fecha o menu flutuante de links no mobile pequeno.
+ */
+function toggleMobLinks() {
+  var menu = document.getElementById('mob-links-menu');
+  if (menu) menu.classList.toggle('open');
+}
+function closeMobLinks() {
+  var menu = document.getElementById('mob-links-menu');
+  if (menu) menu.classList.remove('open');
+}
+// Fecha o menu ao clicar fora dele
+document.addEventListener('click', function(e) {
+  var btn = document.getElementById('mob-links-btn');
+  var menu = document.getElementById('mob-links-menu');
+  if (menu && btn && !menu.contains(e.target) && e.target !== btn) {
+    menu.classList.remove('open');
+  }
+});
+
+/*
+ * statusLabel(status) / statusBadgeClass(status)
+ * Retorna rótulo e classe CSS do badge de status para os cards mobile.
+ */
+function statusLabel(status, execucao) {
+  if (status === 'ok' || execucao === 100) return 'Concluído';
+  if (status === 'atrasado')    return 'Atrasado';
+  if (status === 'aguardando')  return 'Aguardando';
+  if (status === 'paralisado')  return 'Paralisado';
+  if (status === 'andamento')   return 'Em andamento';
+  if (status === 'planejamento') return 'Fila / Planejamento';
+  return status;
+}
+function statusBadgeClass(status, execucao) {
+  if (status === 'ok' || execucao === 100) return 'b-ok';
+  if (status === 'atrasado')    return 'b-atrasado';
+  if (status === 'aguardando')  return 'b-aguardando';
+  if (status === 'paralisado')  return 'b-paralisado';
+  if (status === 'andamento')   return 'b-andamento';
+  return 'b-planejamento';
+}
+
+/*
+ * etapaDotClass(statusEtapa)
+ * Classe do ponto colorido de cada etapa no card expansível.
+ */
+function etapaDotClass(s) {
+  if (!s) return 'c-plan';
+  s = s.toLowerCase();
+  if (s === 'ok' || s === 'concluída' || s === 'concluida') return 'c-ok';
+  if (s === 'andamento' || s === 'em andamento') return 'c-and';
+  if (s === 'atrasado')                       return 'c-atra';
+  if (s.indexOf('aguardando') >= 0)            return 'c-agu';
+  if (s === 'paralisado')                      return 'c-par';
+  if (s === 'não se aplica' || s === 'nao se aplica') return 'c-na';
+  if (s === 'atrasada' || s === 'atrasado')   return 'c-atra';
+  return 'c-plan';
+}
+
+/*
+ * renderMobileList(filtered)
+ * Constrói a lista de cards de processo para visualização mobile.
+ * Cada card mostra nome, badge de status e barra de progresso.
+ * Ao tocar, expande a lista de etapas com status individual.
+ */
+function renderMobileList(filtered) {
+  var container = document.getElementById('mobile-list');
+  if (!container) return;
+  container.innerHTML = '';
+
+  // Aplicar filtro de modalidade (p.modalidade já vem como 'PE', 'CD' ou 'CC' do Codigo.gs)
+  if (activeMobModal) {
+    filtered = filtered.filter(function(p) {
+      var m = (p.modalidade || '').toUpperCase();
+      if (activeMobModal === 'pe') return m === 'PE' || m === 'CC';
+      if (activeMobModal === 'cd') return m === 'CD';
+      return true;
+    });
+  }
+
+  if (!filtered.length) {
+    var vazio = document.createElement('div');
+    vazio.style.cssText = 'text-align:center;padding:40px 20px;color:var(--muted);font-size:14px;';
+    vazio.textContent = 'Nenhum processo encontrado.';
+    container.appendChild(vazio);
+    return;
+  }
+
+  filtered.forEach(function(p) {
+    var pct = p.execucao || 0;
+    var isDone = p.status === 'ok' || pct === 100;
+    var bc = statusBadgeClass(p.status, pct);
+    var bl = statusLabel(p.status, pct);
+
+    // Card wrapper
+    var card = document.createElement('div');
+    card.className = 'mob-card';
+
+    // Header clicável
+    var hdr = document.createElement('div');
+    hdr.className = 'mob-card-header';
+    hdr.setAttribute('role', 'button');
+    hdr.setAttribute('aria-expanded', 'false');
+
+    // Badge de status
+    var badge = document.createElement('span');
+    badge.className = 'mob-badge ' + bc;
+    badge.textContent = bl;
+
+    // Bloco de info (N° SUAP + nome + progresso)
+    var info = document.createElement('div');
+    info.className = 'mob-info';
+
+    var num = document.createElement('div');
+    num.className = 'mob-num';
+    num.textContent = p.num || p.id || '';
+
+    var nome = document.createElement('div');
+    nome.className = 'mob-nome';
+    nome.textContent = p.nome || '';
+
+    var progWrap = document.createElement('div');
+    progWrap.className = 'mob-prog-wrap';
+    var pbar = document.createElement('div');
+    pbar.className = 'mob-pbar';
+    var fill = document.createElement('div');
+    fill.className = 'mob-pbar-fill' + (isDone ? ' done' : '');
+    fill.style.width = pct + '%';
+    pbar.appendChild(fill);
+    var pctEl = document.createElement('span');
+    pctEl.className = 'mob-pct';
+    pctEl.textContent = pct + '%';
+    progWrap.appendChild(pbar);
+    progWrap.appendChild(pctEl);
+
+    info.appendChild(num);
+    info.appendChild(nome);
+    info.appendChild(progWrap);
+
+    // Chevron
+    var chev = document.createElement('div');
+    chev.className = 'mob-chevron';
+    chev.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+
+    hdr.appendChild(badge);
+    hdr.appendChild(info);
+    hdr.appendChild(chev);
+
+    // Bloco de etapas (oculto por padrão)
+    var etapasEl = document.createElement('div');
+    etapasEl.className = 'mob-etapas';
+
+    var etapas = p.etapas || [];
+    if (etapas.length === 0) {
+      var sem = document.createElement('div');
+      sem.className = 'mob-etapa';
+      sem.style.color = 'var(--muted)';
+      sem.style.fontSize = '12px';
+      sem.textContent = 'Sem etapas cadastradas.';
+      etapasEl.appendChild(sem);
+    } else {
+      etapas.forEach(function(et) {
+        var dotCls = etapaDotClass(et.status);
+        var isConcluida = dotCls === 'c-ok';
+        var isNA = dotCls === 'c-na';
+
+        // Linha principal da etapa
+        var linha = document.createElement('div');
+        linha.className = 'mob-etapa';
+        if (!isConcluida && !isNA) linha.style.cursor = 'pointer';
+
+        // Ícone
+        var dot = document.createElement('div');
+        dot.className = 'mob-etapa-dot ' + dotCls;
+        if (isConcluida) {
+          dot.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        } else if (isNA) {
+          dot.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+        } else {
+          dot.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="currentColor"/></svg>';
+        }
+
+        // Corpo
+        var body = document.createElement('div');
+        body.className = 'mob-etapa-body';
+
+        // Nome — para concluída, adiciona ✓ inline em vez de linha separada de status
+        var nomeWrap = document.createElement('div');
+        nomeWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        var enome = document.createElement('span');
+        enome.className = 'mob-etapa-nome';
+        enome.textContent = et.nome || et.etapa || '';
+        nomeWrap.appendChild(enome);
+        if (!isConcluida && !isNA) {
+          // Seta indicando que é expansível
+          var chevEt = document.createElement('span');
+          chevEt.style.cssText = 'color:var(--muted);font-size:10px;margin-left:auto;flex-shrink:0;transition:transform .2s;';
+          chevEt.textContent = '›';
+          nomeWrap.appendChild(chevEt);
+        }
+        body.appendChild(nomeWrap);
+
+        // Status — só para não-concluídas e não-NA
+        if (!isConcluida && !isNA) {
+          var estat = document.createElement('div');
+          estat.className = 'mob-etapa-status';
+          estat.textContent = (STATUS_LABEL && STATUS_LABEL[et.status]) || et.status || 'Não iniciada';
+          body.appendChild(estat);
+        }
+        // Motivo do atraso — visível direto para qualquer etapa com atraso registrado
+        // (inclusive concluídas — o atraso já ocorreu e deve ser visível)
+        if (et.dias > 0 && et.motivo && et.motivo.trim()) {
+          var mot = document.createElement('div');
+          mot.className = 'mob-etapa-motivo';
+          mot.textContent = '⚠ ' + et.motivo.substring(0, 120) + (et.motivo.length > 120 ? '…' : '');
+          body.appendChild(mot);
+        }
+
+        // Painel de detalhes (oculto por padrão) — expansível ao tocar
+        var detalhe = null;
+        if (!isConcluida && !isNA || (et.ini_iso && et.fim_iso)) {
+          detalhe = document.createElement('div');
+          detalhe.className = 'mob-etapa-detalhe';
+          detalhe.style.cssText = 'display:none;margin-top:6px;padding:8px 10px;background:var(--s2);border-radius:8px;font-size:11px;';
+
+          function addRow(label, value, color) {
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border);';
+            var k = document.createElement('span');
+            k.style.cssText = 'color:var(--muted);font-weight:600;';
+            k.textContent = label;
+            var v = document.createElement('span');
+            v.style.cssText = 'font-family:var(--mono);font-weight:700;text-align:right;' + (color ? 'color:' + color + ';' : '');
+            v.textContent = value;
+            row.appendChild(k); row.appendChild(v);
+            detalhe.appendChild(row);
+          }
+
+          // Status
+          var stLabel = STATUS_LABEL ? (STATUS_LABEL[et.status] || et.status || 'Não iniciada') : (et.status || 'Não iniciada');
+          addRow('Status', stLabel, isConcluida ? 'var(--success)' : (et.status === 'atrasado' ? 'var(--danger)' : null));
+
+          // Prazo 638/2026
+          if (et.ini_iso && et.fim_iso) {
+            addRow('Prazo 638/2026', isoToDD_MM(et.ini_iso) + ' → ' + isoToDD_MM_YY(et.fim_iso), null);
+          }
+
+          // Realizado
+          if (et.realizacao_iso) {
+            addRow('Realizado', isoToDD_MM(et.ini_iso) + ' → ' + isoToDD_MM_YY(et.realizacao_iso), null);
+          }
+
+          // Prazo restante — mesma lógica do tooltip desktop
+          if (et.status !== 'ok' && (et.fim_iso || et.ini_iso)) {
+            var _h = new Date(); _h.setHours(0,0,0,0);
+            var _ms = 86400000;
+            if (et.status === 'andamento' || et.status === 'atrasado') {
+              if (et.fim_iso) {
+                var _f = new Date(et.fim_iso + 'T00:00:00');
+                var _d = Math.round((_f - _h) / _ms);
+                if (_d > 0) {
+                  addRow('Prazo restante', 'Falta ' + _d + ' dia' + (_d > 1 ? 's' : ''), _d <= 7 ? 'var(--warn,#c97a00)' : 'var(--success)');
+                } else if (_d === 0) {
+                  addRow('Prazo restante', 'Vence hoje', 'var(--warn,#c97a00)');
+                } else {
+                  addRow('Prazo restante', 'Venceu há ' + (-_d) + ' dia' + (_d < -1 ? 's' : ''), 'var(--danger)');
+                }
+              }
+            } else {
+              // Não iniciada — mostra quando começa
+              if (et.ini_iso) {
+                var _i = new Date(et.ini_iso + 'T00:00:00');
+                var _di = Math.round((_i - _h) / _ms);
+                if (_di > 0) {
+                  addRow('Início previsto', 'Começa em ' + _di + ' dia' + (_di > 1 ? 's' : ''), 'var(--muted)');
+                } else if (_di === 0) {
+                  addRow('Início previsto', 'Começa hoje', 'var(--warn,#c97a00)');
+                } else if (p.execucao < 100 && p.status !== 'ok') {
+                  addRow('Início previsto', 'Atrasado há ' + (-_di) + ' dia' + (_di < -1 ? 's' : ''), 'var(--danger)');
+                }
+              }
+            }
+          }
+
+          // Atraso
+          if (et.dias && et.dias > 0) {
+            addRow('Atraso registrado', '+' + et.dias + ' dia' + (et.dias > 1 ? 's' : ''), 'var(--danger)');
+            // Último item sem border-bottom
+            detalhe.lastChild.style.borderBottom = 'none';
+          } else {
+            if (detalhe.lastChild) detalhe.lastChild.style.borderBottom = 'none';
+          }
+
+          body.appendChild(detalhe);
+
+          // Toggle ao tocar
+          (function(det, chv) {
+            linha.addEventListener('click', function() {
+              var open = det.style.display === 'none';
+              det.style.display = open ? 'block' : 'none';
+              if (chv) chv.style.transform = open ? 'rotate(90deg)' : '';
+            });
+          })(detalhe, chevEt || null);
+        }
+
+        linha.appendChild(dot);
+        linha.appendChild(body);
+        etapasEl.appendChild(linha);
+      });
+    }
+
+    // Toggle ao tocar/clicar
+    hdr.addEventListener('click', function() {
+      var open = etapasEl.classList.toggle('open');
+      chev.classList.toggle('open', open);
+      hdr.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+
+    card.appendChild(hdr);
+    card.appendChild(etapasEl);
+    container.appendChild(card);
+  });
+
+  updateKPIs(filtered);
 }
 
 /*
@@ -1758,17 +2418,23 @@ function applyFilters() {
   // entregue, o ícone de alerta some e ele não precisa mais chamar atenção —
   // mas ainda fica acima dos "planejamento" porque é um processo efetivo.
   function ordemStatus(p) {
-    if (p.status === 'atrasado')    return p.execucao === 100 ? 3 : 0; // atrasado em curso: topo; concluído com atraso: cai
-    if (p.status === 'aguardando')  return 1; // logo após atrasados — precisa de atenção
-    if (p.status === 'paralisado')  return 2; // antes dos "em andamento" normais
-    if (p.status === 'andamento')   return 4;
-    if (p.status === 'planejamento') return 5;
-    return 6;
+    // Concluídos (100% ou status ok) sempre no final, independente do status
+    if (p.execucao === 100 || p.status === 'ok') return 6;
+    if (p.status === 'atrasado')     return 0; // atrasados em curso: topo
+    if (p.status === 'aguardando')   return 1;
+    if (p.status === 'paralisado')   return 2;
+    if (p.status === 'andamento')    return 3;
+    if (p.status === 'planejamento') return 4;
+    return 5;
   }
   filtered.sort(function(a, b) {
     return ordemStatus(a) - ordemStatus(b);
   });
-  render(filtered);
+  if (isMobile()) {
+    renderMobileList(filtered);
+  } else {
+    render(filtered);
+  }
 }
 
 /*
@@ -1791,7 +2457,8 @@ function updateKPIs(filtered) {
   document.getElementById('kv-and').textContent  = activeStatus === 'atrasado' ? '——' : kpiVal(emAndamento.length);
   // "Atrasados" exclui processos já concluídos (mesmo que tenham tido atraso)
   document.getElementById('kv-atra').textContent = kpiVal(atrasadosAtivos.length);
-  document.getElementById('kv-plan').textContent = kpiVal(filtered.filter(function(p){ return p.status === 'planejamento'; }).length);
+  var basePlan = activeStatus ? filtered : DATA;
+  document.getElementById('kv-plan').textContent = kpiVal(basePlan.filter(function(p){ return p.status === 'planejamento'; }).length);
   document.getElementById('kv-conc').textContent = kpiVal(concluidos.length);
 }
 

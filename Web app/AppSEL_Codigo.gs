@@ -1,0 +1,2218 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// AppSEL — App de Gestão de Etapas · SEL / Colégio Pedro II
+// Versão 1.0 — Maio 2026
+//
+// ── PASSOS PARA PUBLICAR ─────────────────────────────────────────────────
+// 1. Crie um novo projeto em script.google.com
+// 2. Cole este arquivo como "AppSEL_Codigo.gs"
+// 3. Cole o arquivo "AppSEL_index.html"
+// 4. Preencha SS_ID. CHEFIA_EMAIL/EMAILS_SEL são fallback; o app também usa os e-mails salvos na Config.
+// 5. Implantar → Novo → App da Web
+//    • Executar como: Eu
+//    • Quem pode acessar: Qualquer pessoa com o link
+// 6. Copie a URL gerada e distribua para a equipe SEL
+//
+// ── COMO OBTER O SS_ID ───────────────────────────────────────────────────
+// Abra a planilha CronogramaContratacoes no Google Sheets.
+// URL: https://docs.google.com/spreadsheets/d/ID_AQUI/edit
+// Copie o trecho entre /d/ e /edit.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── CONFIGURAÇÃO OBRIGATÓRIA ─────────────────────────────────────────────
+var SS_ID        = '1pXdDhz_gxaSYeuGcAk-pIN-HhFx7bKVBXM3XFl6s9Mk';
+var CHEFIA_EMAIL = 'COLE_AQUI_O_EMAIL_DA_CHEFIA';  // fallback opcional
+var EMAILS_SEL   = {
+  'Amanda':  'COLE_EMAIL_AMANDA',   // ← preencher
+  'Beatriz': 'COLE_EMAIL_BEATRIZ',  // ← preencher
+  'Bruno':   'COLE_EMAIL_BRUNO',    // ← preencher
+  'Samuel':  'casar70@gmail.com'
+};
+var DIAS_AVISO = 3; // dias úteis de antecedência para enviar aviso de prazo
+var AVISO_HORA = 10;
+var AVISO_MINUTO = 30;
+var AVISO_HORA_LABEL = '10h30';
+// ─────────────────────────────────────────────────────────────────────────
+
+var ABA_PROC = '🏛 Processos';
+var ABA_ETP  = '🗓 Etapas';
+var ABA_HIST = '__historico_motivos'; // aba oculta, append-only
+
+// ── Feriados nacionais fixos (MM-DD) ─────────────────────────────────────
+var _FERIADOS = ['01-01','04-21','05-01','09-07','10-12','11-02','11-15','11-20','12-25'];
+
+function _isFer_(d) {
+  return _FERIADOS.indexOf(
+    String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+  ) >= 0;
+}
+
+function _addDU_(data, dias) {
+  if (dias <= 0) return new Date(data.getTime());
+  var d = new Date(data.getTime()), n = 0;
+  while (n < dias) {
+    d.setDate(d.getDate() + 1);
+    if (d.getDay() !== 0 && d.getDay() !== 6 && !_isFer_(d)) n++;
+  }
+  return d;
+}
+
+function _contDU_(ini, fim) {
+  if (!ini || !fim) return 0;
+  var a = new Date(ini); a.setHours(0,0,0,0);
+  var b = new Date(fim); b.setHours(0,0,0,0);
+  if (b.getTime() === a.getTime()) return 0;
+  var sinal = b > a ? 1 : -1;
+  var c = 0, d = new Date(a);
+  while ((sinal > 0 && d < b) || (sinal < 0 && d > b)) {
+    d.setDate(d.getDate() + sinal);
+    if (d.getDay() !== 0 && d.getDay() !== 6 && !_isFer_(d)) c++;
+  }
+  return c * sinal;
+}
+
+function _parseDate_(v) {
+  if (!v) return null;
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return null;
+    return new Date(v.getUTCFullYear(), v.getUTCMonth(), v.getUTCDate());
+  }
+  var s = String(v).trim();
+  var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return new Date(+m[3], +m[2]-1, +m[1]);
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return new Date(+m[1], +m[2]-1, +m[3]);
+  return null;
+}
+
+function _toIso_(d) {
+  if (!d) return null;
+  return d.getFullYear() + '-' +
+    String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0');
+}
+
+function _normStatus_(s) {
+  if (!s) return 'pendente';
+  var n = String(s).trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (n.indexOf('conclu')   >= 0)             return 'ok';
+  if (n.indexOf('andament') >= 0)             return 'andamento';
+  if (n.indexOf('atras')    >= 0)             return 'atrasado';
+  if (n.startsWith('aguard'))                 return 'aguardando';
+  if (n.startsWith('parali') || n.startsWith('suspen')) return 'paralisado';
+  if (n === 'nao se aplica' || n === 'n/a')   return 'na';
+  return 'pendente';
+}
+
+function _normText_(s) {
+  return String(s || '').trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function _isEtapaContratual_(fase, nome) {
+  var f = _normText_(fase);
+  var n = _normText_(nome);
+  return f.indexOf('contrat') >= 0 ||
+    n.indexOf('assinatura contrato') >= 0 ||
+    n.indexOf('ata (arp)') >= 0 ||
+    n.indexOf('gestao contratual') >= 0;
+}
+
+function _isSim_(v) {
+  if (v === true) return true;
+  var n = String(v || '').trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return n === 'sim' || n === 's' || n === 'true' || n === '1';
+}
+
+function _statusPlanilha_(s) {
+  var n = _normStatus_(s);
+  var map = {
+    ok: 'Concluída',
+    andamento: 'Em andamento',
+    aguardando: 'Aguardando requisitante',
+    paralisado: 'Paralisado',
+    na: 'Não se aplica',
+    pendente: 'Não iniciada',
+    atrasado: 'Atrasado'
+  };
+  return map[n] || s;
+}
+
+function _isModalidadeExtSegregada_(modalidade) {
+  var m = _normText_(modalidade);
+  return m.indexOf('pregao') >= 0 || m.indexOf('concorr') >= 0;
+}
+
+function _garantirColunas_(sh, chave, colunas) {
+  var l = _lerAba_(sh, chave);
+  var header = l.header.slice();
+  var lastCol = sh.getLastColumn();
+  var criadas = false;
+  colunas.forEach(function(nome) {
+    if (header.indexOf(nome) >= 0) return;
+    lastCol++;
+    sh.getRange(l.hIdx + 1, lastCol).setValue(nome).setFontWeight('bold');
+    header.push(nome);
+    criadas = true;
+  });
+  return criadas ? _lerAba_(sh, chave) : l;
+}
+
+function _servidoresValidosMap_() {
+  var map = {};
+  try {
+    getServidoresApp().forEach(function(s) {
+      if (s.nome) map[String(s.nome).trim().toLowerCase()] = s.nome;
+    });
+  } catch(e) {
+    ['Amanda','Beatriz','Bruno','Samuel'].forEach(function(n) {
+      map[n.toLowerCase()] = n;
+    });
+  }
+  return map;
+}
+
+function _normServidorNome_(s) {
+  return String(s || '').trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function _propKeyServidor_(prefixo, servidor) {
+  return prefixo + '_' + _normServidorNome_(servidor).replace(/[^a-z0-9]+/g, '_');
+}
+
+function _servidorTemVinculosAtivos_(nome) {
+  var alvo = _normServidorNome_(nome);
+  if (!alvo) return { tem: false, total: 0 };
+  var total = 0;
+  try {
+    var ss = _ss_();
+    var shE = ss.getSheetByName(ABA_ETP);
+    if (shE) {
+      var lE = _lerAba_(shE, 'ProcessoID');
+      var hE = lE.header;
+      var iAg = hE.indexOf('Agente Responsável');
+      var iSt = hE.indexOf('StatusEtapa ◄ EDITAR');
+      if (iAg >= 0) {
+        for (var r = lE.hIdx + 1; r < lE.values.length; r++) {
+          var row = lE.values[r];
+          if (_normServidorNome_(row[iAg]) !== alvo) continue;
+          var st = iSt >= 0 ? _normStatus_(row[iSt]) : 'pendente';
+          if (st !== 'ok' && st !== 'na') total++;
+        }
+      }
+    }
+
+    var shC = ss.getSheetByName('📊 Capacidade');
+    if (shC) {
+      var data = shC.getRange(1, 1, shC.getLastRow(), shC.getLastColumn()).getValues();
+      var regHdr = -1;
+      for (var i = 0; i < data.length; i++) {
+        var rr = data[i].map(function(c){ return String(c).trim(); });
+        if (rr[0].indexOf('Servidor') >= 0 && rr[2] === 'ProcessoID') { regHdr = i; break; }
+      }
+      if (regHdr >= 0) {
+        var hC = data[regHdr].map(function(c){ return String(c).trim(); });
+        var iAt = hC.indexOf('Ativo');
+        for (var c = regHdr + 1; c < data.length; c++) {
+          if (_normServidorNome_(data[c][0]) !== alvo) continue;
+          if (iAt < 0 || _isSim_(data[c][iAt])) total++;
+        }
+      }
+    }
+  } catch(e) {}
+  return { tem: total > 0, total: total };
+}
+
+function _renomearServidorNasAbas_(antigo, novo) {
+  var alvo = _normServidorNome_(antigo);
+  if (!alvo || alvo === _normServidorNome_(novo)) return 0;
+  var alterados = 0;
+  var ss = _ss_();
+
+  var shE = ss.getSheetByName(ABA_ETP);
+  if (shE) {
+    var lE = _lerAba_(shE, 'ProcessoID');
+    var hE = lE.header;
+    var iAg = hE.indexOf('Agente Responsável');
+    if (iAg >= 0) {
+      for (var r = lE.hIdx + 1; r < lE.values.length; r++) {
+        if (_normServidorNome_(lE.values[r][iAg]) === alvo) {
+          shE.getRange(r + 1, iAg + 1).setValue(novo);
+          alterados++;
+        }
+      }
+    }
+  }
+
+  var shC = ss.getSheetByName('📊 Capacidade');
+  if (shC) {
+    var data = shC.getRange(1, 1, shC.getLastRow(), shC.getLastColumn()).getValues();
+    var regHdr = -1;
+    for (var i = 0; i < data.length; i++) {
+      var rr = data[i].map(function(c){ return String(c).trim(); });
+      if (rr[0].indexOf('Servidor') >= 0 && rr[2] === 'ProcessoID') { regHdr = i; break; }
+    }
+    if (regHdr >= 0) {
+      for (var c = regHdr + 1; c < data.length; c++) {
+        if (_normServidorNome_(data[c][0]) === alvo) {
+          var cell = shC.getRange(c + 1, 1);
+          cell.clearDataValidations().setValue(novo);
+          alterados++;
+        }
+      }
+    }
+  }
+
+  return alterados;
+}
+
+function _lerServidoresConfigSheet_() {
+  try {
+    var sh = _ss_().getSheetByName('⚙️ ConfigSEL') || _ss_().getSheetByName('ConfigSEL');
+    if (!sh || sh.getLastRow() < 2) return null;
+    var vals = sh.getRange(1, 1, sh.getLastRow(), Math.max(sh.getLastColumn(), 4)).getValues();
+    var h = vals[0].map(function(c){ return String(c || '').trim(); });
+    var iNome = h.indexOf('Nome');
+    var iCor = h.indexOf('Cor');
+    var iChefe = h.indexOf('Chefe');
+    if (iNome < 0) return null;
+    var out = [];
+    for (var r = 1; r < vals.length; r++) {
+      var nome = String(vals[r][iNome] || '').trim();
+      if (!nome) continue;
+      out.push({
+        nome: nome,
+        cor: iCor >= 0 ? String(vals[r][iCor] || '#64748b').trim() : '#64748b',
+        isChefe: iChefe >= 0 && _isSim_(vals[r][iChefe])
+      });
+    }
+    return out.length ? out : null;
+  } catch(e) {
+    return null;
+  }
+}
+
+function _salvarServidoresConfigSheet_(lista) {
+  try {
+    var ss = _ss_();
+    var sh = ss.getSheetByName('⚙️ ConfigSEL') || ss.getSheetByName('ConfigSEL');
+    if (!sh) sh = ss.insertSheet('⚙️ ConfigSEL');
+    var props = PropertiesService.getScriptProperties();
+    var values = [['Nome', 'Cor', 'Chefe', 'Email']];
+    lista.forEach(function(s) {
+      values.push([
+        s.nome,
+        s.cor || '#64748b',
+        s.isChefe ? 'Sim' : 'Não',
+        props.getProperty('email_' + s.nome) || EMAILS_SEL[s.nome] || ''
+      ]);
+    });
+    sh.clearContents();
+    sh.getRange(1, 1, values.length, values[0].length).setValues(values);
+    try { sh.hideSheet(); } catch(eHide) {}
+  } catch(e) {}
+}
+
+function _ss_() { return SpreadsheetApp.openById(SS_ID); }
+
+function _setCapacidadeAtivo_(pid, faseTipo, ativo) {
+  var shCap = _ss_().getSheetByName('📊 Capacidade');
+  if (!shCap) return false;
+  var data = shCap.getRange(1, 1, shCap.getLastRow(), shCap.getLastColumn()).getValues();
+  var regHdr = -1;
+  for (var r = 0; r < data.length; r++) {
+    var rr = data[r].map(function(c){ return String(c).trim(); });
+    if (rr[0].indexOf('Servidor') >= 0 && rr[2] === 'ProcessoID') { regHdr = r; break; }
+  }
+  if (regHdr < 0) return false;
+  var hCap = data[regHdr].map(function(c){ return String(c).trim(); });
+  var iAtivo = hCap.indexOf('Ativo');
+  if (iAtivo < 0) return false;
+
+  var alvoExt = String(faseTipo || '').toLowerCase().indexOf('ext') >= 0;
+  var changed = false;
+  for (var i = regHdr + 1; i < data.length; i++) {
+    var cpid = String(data[i][2] || '').trim();
+    if (cpid !== pid) continue;
+    var cfase = String(data[i][5] || '').trim().toLowerCase();
+    var isExt = cfase.indexOf('ext') >= 0;
+    if (isExt === alvoExt) {
+      shCap.getRange(i + 1, iAtivo + 1).setValue(ativo);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function _corrigirProcessoIdsBlocosEtapas_() {
+  try {
+    var sh = _ss_().getSheetByName(ABA_ETP);
+    if (!sh) return { corrigidos: 0 };
+    var lE = _lerAba_(sh, 'ProcessoID');
+    var h = lE.header;
+    var iPid = h.indexOf('ProcessoID');
+    var iEtapa = h.indexOf('Etapa');
+    if (iPid < 0 || iEtapa < 0) return { corrigidos: 0 };
+
+    function corrigirBloco_(bloco) {
+      if (!bloco.length) return 0;
+      var cont = {};
+      bloco.forEach(function(item) {
+        if (item.pid) cont[item.pid] = (cont[item.pid] || 0) + 1;
+      });
+      var alvo = '', maior = 0, empate = false;
+      Object.keys(cont).forEach(function(pid) {
+        if (cont[pid] > maior) { alvo = pid; maior = cont[pid]; empate = false; }
+        else if (cont[pid] === maior) { empate = true; }
+      });
+      if (!alvo || empate || maior < 2) return 0;
+      var n = 0;
+      bloco.forEach(function(item) {
+        if (item.pid && item.pid !== alvo) {
+          sh.getRange(item.row, iPid + 1).setValue(alvo);
+          n++;
+        }
+      });
+      return n;
+    }
+
+    var bloco = [], corrigidos = 0;
+    for (var r = lE.hIdx + 1; r < lE.values.length; r++) {
+      var row = lE.values[r];
+      var pid = String(row[iPid] || '').trim();
+      var etapa = String(row[iEtapa] || '').trim();
+      if (!etapa) {
+        corrigidos += corrigirBloco_(bloco);
+        bloco = [];
+        continue;
+      }
+      if (etapa) bloco.push({ row: r + 1, pid: pid });
+    }
+    corrigidos += corrigirBloco_(bloco);
+    return { corrigidos: corrigidos };
+  } catch(e) {
+    return { corrigidos: 0, erro: e.message };
+  }
+}
+
+function _marcarEtapasContratuaisNA_() {
+  try {
+    var sh = _ss_().getSheetByName(ABA_ETP);
+    if (!sh) return { atualizadas: 0 };
+    var lE = _lerAba_(sh, 'ProcessoID');
+    var h = lE.header;
+    var iNome = h.indexOf('Etapa');
+    var iFase = h.indexOf('Fase');
+    var iStat = h.indexOf('StatusEtapa ◄ EDITAR');
+    if (iNome < 0 || iStat < 0) return { atualizadas: 0 };
+    var atualizadas = 0;
+    for (var r = lE.hIdx + 1; r < lE.values.length; r++) {
+      var nome = String(lE.values[r][iNome] || '').trim();
+      var fase = iFase >= 0 ? String(lE.values[r][iFase] || '').trim() : '';
+      if (!_isEtapaContratual_(fase, nome)) continue;
+      if (_normStatus_(lE.values[r][iStat]) === 'na') continue;
+      sh.getRange(r + 1, iStat + 1).setValue('Não se aplica');
+      atualizadas++;
+    }
+    return { atualizadas: atualizadas };
+  } catch(e) {
+    return { atualizadas: 0, erro: e.message };
+  }
+}
+
+// ── _lerAba_ ──────────────────────────────────────────────────────────────
+// Lê uma aba e encontra o cabeçalho real dinamicamente (ignora linhas de
+// título decorativas acima). Retorna {header, hIdx, values, startRow}.
+// hIdx   = índice da linha do cabeçalho em values[] (0-based)
+// startRow = linha real na planilha onde os dados começam (1-based)
+function _lerAba_(sh, chave) {
+  var nCols  = sh.getLastColumn();
+  var nRows  = Math.max(sh.getLastRow(), 3);
+  var values = sh.getRange(1, 1, nRows, nCols).getValues();
+  for (var r = 0; r < values.length; r++) {
+    var row = values[r].map(function(c){ return String(c).trim(); });
+    if (row.indexOf(chave) >= 0) {
+      return { header: row, hIdx: r, values: values, startRow: r + 2 };
+    }
+  }
+  throw new Error('Cabeçalho com "' + chave + '" não encontrado na aba ' + sh.getName());
+}
+
+// ── doGet ─────────────────────────────────────────────────────────────────
+function doGet() {
+  return HtmlService
+    .createHtmlOutputFromFile('index')
+    .setTitle('SEL · Etapas')
+    .addMetaTag('viewport', 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no');
+}
+
+// ── getEtapasParaApp ──────────────────────────────────────────────────────
+// Retorna todos os processos com etapas calculadas em cascata (dias úteis).
+// Inclui referência ao histórico de motivos para exibir o cadeado no app.
+function getEtapasParaApp() {
+  var ss = _ss_();
+  _corrigirProcessoIdsBlocosEtapas_();
+  _marcarEtapasContratuaisNA_();
+  _sincronizarCapacidadeComEtapas_();
+
+  // ── Processos ──────────────────────────────────────────────────────────
+  var shP  = ss.getSheetByName(ABA_PROC);
+  var lP   = _garantirColunas_(shP, 'ProcessoID', ['Setor Requisitante', 'EmailRequisitante']);
+  var hP   = lP.header;
+  var iP   = {
+    id:    hP.indexOf('ProcessoID'),
+    num:   hP.indexOf('N° SUAP'),
+    nome:  hP.indexOf('Objeto'),
+    modal: hP.indexOf('Modalidade'),
+    d0:    hP.indexOf('D0 (Data Abertura)'),
+    irp:   hP.indexOf('Tem IRP?'),
+    req:   hP.indexOf('Setor Requisitante'),
+    suap:  hP.indexOf('Link SUAP'),
+    emailR: hP.indexOf('EmailRequisitante')
+  };
+
+  var procs = [];
+  var filaPrevisao = []; // processos sem D0 (aguardando entrada na fila)
+  for (var i = lP.hIdx + 1; i < lP.values.length; i++) {
+    var r   = lP.values[i];
+    var pid = String(r[iP.id] || '').trim();
+    if (!pid) continue;
+    var d0 = _parseDate_(r[iP.d0]);
+    if (!d0) {
+      filaPrevisao.push({
+        id:    pid,
+        num:   String(r[iP.num]  || '').trim(),
+        nome:  String(r[iP.nome] || '').trim(),
+        modal: String(r[iP.modal]|| '').trim(),
+        req:   iP.req >= 0 ? String(r[iP.req] || '').trim() : '',
+        suap:  String(r[iP.suap] || '#').trim()
+      });
+      continue;
+    }
+    procs.push({
+      id:     pid,
+      num:    String(r[iP.num]  || '').trim(),
+      nome:   String(r[iP.nome] || '').trim(),
+      modal:  String(r[iP.modal]|| '').trim(),
+      d0:     d0,
+      temIRP: String(r[iP.irp] || '').trim().toLowerCase() === 'sim',
+      req:    iP.req  >= 0 ? String(r[iP.req]  || '').trim() : '',
+      emailR: iP.emailR >= 0 ? String(r[iP.emailR] || '').trim() : '',
+      suap:   String(r[iP.suap] || '#').trim()
+    });
+  }
+
+  // ── Etapas ─────────────────────────────────────────────────────────────
+  var shE  = ss.getSheetByName(ABA_ETP);
+  var lE   = _lerAba_(shE, 'ProcessoID');
+  var hE   = lE.header;
+  var iE   = {
+    pid:    hE.indexOf('ProcessoID'),
+    nome:   hE.indexOf('Etapa'),
+    prazo:  hE.indexOf('Prazo (dias)'),
+    status: hE.indexOf('StatusEtapa ◄ EDITAR'),
+    motivo: hE.indexOf('MotivoAtraso ◄ EDITAR'),
+    realiz: hE.indexOf('DataRealizacao◄ EDITAR'),
+    agente: hE.indexOf('Agente Responsável'),
+    fase:   hE.indexOf('Fase')
+  };
+
+  var etpPorProc = {};
+  for (var j = lE.hIdx + 1; j < lE.values.length; j++) {
+    var er    = lE.values[j];
+    var epid  = String(er[iE.pid]  || '').trim();
+    var enome = String(er[iE.nome] || '').trim();
+    if (!epid || !enome) continue;
+    if (!etpPorProc[epid]) etpPorProc[epid] = [];
+    var faseEt = String(er[iE.fase] || '').trim();
+    var statusEt = _normStatus_(er[iE.status]);
+    if (_isEtapaContratual_(faseEt, enome)) statusEt = 'na';
+    etpPorProc[epid].push({
+      linha:  j + 1,  // linha real na planilha (1-based)
+      nome:   enome,
+      prazo:  parseInt(er[iE.prazo]) || 0,
+      status: statusEt,
+      motivo: String(er[iE.motivo] || '').trim(),
+      realiz: _parseDate_(er[iE.realiz]),
+      agente: String(er[iE.agente] || '').trim(),
+      fase:   faseEt
+    });
+  }
+
+  // ── Mapa ProcessoID → servidor (fase interna, ativo = Sim) ───────────
+  var shCap = ss.getSheetByName('📊 Capacidade');
+  var servMap = {};
+  if (shCap) {
+    try {
+      var capData = shCap.getRange(1,1,shCap.getLastRow(),shCap.getLastColumn()).getValues();
+      var regHdr = -1;
+      for (var ci = 0; ci < capData.length; ci++) {
+        var cr = capData[ci].map(function(c){ return String(c).trim(); });
+        if (cr[0].indexOf('Servidor') >= 0 && cr[2] === 'ProcessoID') { regHdr = ci; break; }
+      }
+      if (regHdr >= 0) {
+        for (var ci2 = regHdr+1; ci2 < capData.length; ci2++) {
+          var cr2 = capData[ci2];
+          var cpid = String(cr2[2]||'').trim();
+          var cserv = String(cr2[0]||'').trim();
+          var cativo = cr2[3];
+          var cfase = String(cr2[5]||'').trim().toLowerCase();
+          if (cpid && cserv) {
+            var nomeNorm = cserv.charAt(0).toUpperCase() + cserv.slice(1).toLowerCase();
+            if (!servMap[cpid]) servMap[cpid] = { int: '', ext: '', hasInt: false, hasExt: false };
+            if (cfase.indexOf('ext') >= 0) {
+              servMap[cpid].hasExt = true;
+              if (_isSim_(cativo)) servMap[cpid].ext = nomeNorm;
+            } else {
+              // fase interna ou sem fase especificada
+              servMap[cpid].hasInt = true;
+              if (_isSim_(cativo)) servMap[cpid].int = nomeNorm;
+            }
+          }
+        }
+      }
+    } catch(e2) {}
+  }
+
+  // ── Histórico de motivos (para exibir cadeado no app) ─────────────────
+  var histMap = _histMap_();
+
+  // ── Cascata de datas + montagem do resultado ───────────────────────────
+  var resultado = procs.map(function(p) {
+    var etapas = etpPorProc[p.id] || [];
+    var cursor = new Date(p.d0.getTime());
+    var etapaAtualIdx = -1;
+
+    var etCalc = etapas.map(function(et, idx) {
+      var ini     = new Date(cursor.getTime());
+      var fimPrev = _addDU_(ini, et.prazo);
+      var atraso  = 0;
+
+      if (et.realiz) {
+        atraso = Math.max(0, _contDU_(fimPrev, et.realiz));
+        cursor = new Date(et.realiz.getTime());
+      } else if (et.status !== 'na') {
+        cursor = new Date(fimPrev.getTime());
+      }
+
+      if (etapaAtualIdx < 0 && et.status !== 'ok' && et.status !== 'na') {
+        etapaAtualIdx = idx;
+      }
+
+      var histKey = p.id + '||' + et.nome;
+      return {
+        linha:         et.linha,
+        prazo:         et.prazo,
+        nome:          et.nome,
+        agente:        et.agente,
+        fase:          et.fase,
+        status:        et.status,
+        motivo:        et.motivo,
+        dias:          atraso,
+        ini_iso:       _toIso_(ini),
+        fim_iso:       _toIso_(fimPrev),
+        realizacao_iso: et.realiz ? _toIso_(et.realiz) : null,
+        historico:     histMap[histKey] || null  // {tsStr, servidor, motivo, dias}
+      };
+    });
+
+    // Status geral e percentual
+    var semNA    = etCalc.filter(function(e) { return e.status !== 'na'; });
+    var concl    = semNA.filter(function(e) { return e.status === 'ok'; }).length;
+    var execucao = semNA.length ? Math.round(concl / semNA.length * 100) : 0;
+
+    var st = 'planejamento';
+    if (execucao === 100)                                          st = 'ok';
+    else if (etCalc.some(function(e){ return e.status==='atrasado';  })) st = 'atrasado';
+    else if (etCalc.some(function(e){ return e.status==='aguardando';})) st = 'aguardando';
+    else if (etCalc.some(function(e){ return e.status==='paralisado';})) st = 'paralisado';
+    else if (etCalc.some(function(e){ return e.status==='andamento'; })) st = 'andamento';
+    else if (concl > 0)                                                 st = 'andamento';
+
+    // modalAbrev: 'PE' para Pregão/Concorrência, 'CD' para Contratação Direta/Dispensa
+    var mNorm = p.modal.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+    var mAbrev = (mNorm.indexOf('pregao') >= 0 || mNorm.indexOf('concorr') >= 0) ? 'PE' : 'CD';
+
+    // Badge fallback: se o processo não está na Capacidade, usa o Agente da aba Etapas
+    var srvInt = servMap[p.id] ? (servMap[p.id].int || '') : '';
+    var srvExt = servMap[p.id] ? (servMap[p.id].ext || '') : '';
+    if (!srvInt && (!servMap[p.id] || !servMap[p.id].hasInt)) {
+      for (var fi = 0; fi < etapas.length; fi++) {
+        if ((etapas[fi].fase||'').toLowerCase().indexOf('ext') < 0 && etapas[fi].agente) {
+          srvInt = etapas[fi].agente; break;
+        }
+      }
+    }
+    if (!srvExt && (!servMap[p.id] || !servMap[p.id].hasExt)) {
+      for (var fe = 0; fe < etapas.length; fe++) {
+        if ((etapas[fe].fase||'').toLowerCase().indexOf('ext') >= 0 && etapas[fe].agente) {
+          srvExt = etapas[fe].agente; break;
+        }
+      }
+    }
+
+    return {
+      id: p.id, num: p.num || p.id, nome: p.nome, modal: p.modal, modalAbrev: mAbrev,
+      req: p.req, emailR: p.emailR, suap: p.suap, d0_iso: _toIso_(p.d0),
+      execucao: execucao, status: st,
+      servidor:    srvInt,
+      servidorExt: srvExt,
+      etapaAtualIdx: etapaAtualIdx,
+      etapas: etCalc
+    };
+  });
+
+  // Ordena: atrasado → aguardando → paralisado → andamento → planejamento → ok
+  var ORD = { atrasado:0, aguardando:1, paralisado:2, andamento:3, planejamento:4, ok:5 };
+  resultado.sort(function(a, b) { return (ORD[a.status]||6) - (ORD[b.status]||6); });
+
+  // Enriquece filaPrevisao com prazos das etapas (para simulação no app)
+  filaPrevisao = filaPrevisao.map(function(fp) {
+    var ets = etpPorProc[fp.id] || [];
+    fp.etapasPrazos = ets.map(function(e) {
+      return { nome: e.nome, prazo: e.prazo, fase: e.fase, status: e.status };
+    });
+    fp.servidor    = servMap[fp.id] ? (servMap[fp.id].int || '') : '';
+    fp.servidorExt = servMap[fp.id] ? (servMap[fp.id].ext || '') : '';
+    return fp;
+  });
+
+  return { processos: resultado, filaPrevisao: filaPrevisao };
+}
+
+// ── iniciarProcessos ──────────────────────────────────────────────────────
+// Define D0 para processos da fila, tornando-os ativos na aba Etapas.
+// params: [{pid, d0 (YYYY-MM-DD), servidor, servidorExt}]
+function iniciarProcessos(params) {
+  try {
+    var ss  = _ss_();
+    var shP = ss.getSheetByName(ABA_PROC);
+    var shE = ss.getSheetByName(ABA_ETP);
+    var lP  = _lerAba_(shP, 'ProcessoID');
+    var hP  = lP.header;
+    var iId = hP.indexOf('ProcessoID');
+    var iD0 = hP.indexOf('D0 (Data Abertura)');
+    var iModal = hP.indexOf('Modalidade');
+    if (iId < 0 || iD0 < 0) throw new Error('Colunas não encontradas na aba Processos.');
+
+    var lE   = _lerAba_(shE, 'ProcessoID');
+    var hE   = lE.header;
+    var iPid = hE.indexOf('ProcessoID');
+    var iAg  = hE.indexOf('Agente Responsável');
+    var iFas = hE.indexOf('Fase');
+    var iNom = hE.indexOf('Etapa');
+    var iSta = hE.indexOf('StatusEtapa ◄ EDITAR');
+
+    var modalPorPid = {};
+    for (var mp = lP.hIdx + 1; mp < lP.values.length; mp++) {
+      var mpid = String(lP.values[mp][iId] || '').trim();
+      if (mpid) modalPorPid[mpid] = iModal >= 0 ? String(lP.values[mp][iModal] || '').trim() : '';
+    }
+
+    var iniciados = 0;
+    params.forEach(function(item) {
+      var d0Obj = new Date(item.d0 + 'T12:00:00');
+      var modalidadeProc = modalPorPid[item.pid] || item.modal || '';
+      var extSegregada = _isModalidadeExtSegregada_(modalidadeProc);
+      if (extSegregada && item.servidor && item.servidorExt && item.servidor === item.servidorExt) {
+        throw new Error('Fase interna e fase externa precisam ter responsáveis diferentes em Pregão/Concorrência.');
+      }
+      // Grava o D0 escolhido na fila.
+      for (var r = lP.hIdx + 1; r < lP.values.length; r++) {
+        if (String(lP.values[r][iId]||'').trim() === item.pid) {
+          if (item.d0) {
+            shP.getRange(r + 1, iD0 + 1).setValue(d0Obj).setNumberFormat('DD/MM/YYYY');
+          }
+          iniciados++;
+          break;
+        }
+      }
+
+      var primeiraEtapa = 0;
+      for (var j = lE.hIdx + 1; j < lE.values.length; j++) {
+        var epid = String(lE.values[j][iPid]||'').trim();
+        if (epid !== item.pid) continue;
+        var efaseRaw = String(iFas >= 0 ? lE.values[j][iFas] : '').trim();
+        var efase = efaseRaw.toLowerCase();
+        var enome = iNom >= 0 ? String(lE.values[j][iNom] || '').trim() : '';
+        var isExt = efase.indexOf('ext') >= 0;
+        var agente = isExt
+          ? (extSegregada ? (item.servidorExt || '') : (item.servidorExt || item.servidor || ''))
+          : (item.servidor || '');
+        if (iAg >= 0) shE.getRange(j + 1, iAg + 1).setValue(agente);
+        if (!primeiraEtapa && !_isEtapaContratual_(efaseRaw, enome)) {
+          var stEt = iSta >= 0 ? _normStatus_(lE.values[j][iSta]) : 'pendente';
+          if (stEt !== 'ok' && stEt !== 'na') primeiraEtapa = j + 1;
+        }
+      }
+      if (primeiraEtapa && iSta >= 0) {
+        shE.getRange(primeiraEtapa, iSta + 1).setValue('Em andamento');
+      }
+      _setCapacidadeAtivo_(item.pid, 'interna', 'Sim');
+      _setCapacidadeAtivo_(item.pid, 'externa', 'Não');
+    });
+    _sincronizarCapacidadeComEtapas_();
+    return { ok: true, iniciados: iniciados };
+  } catch(e) { return { ok: false, erro: e.message }; }
+}
+
+// ── concluirEtapa ─────────────────────────────────────────────────────────
+// Chamada pelo app ao confirmar a conclusão de uma etapa.
+// params: {linhaEtapa, processoId, nomeEtapa, dataRealizacao (YYYY-MM-DD),
+//          motivo, servidor, diasAtraso}
+// Grava na planilha E appenda no histórico (append-only).
+function concluirEtapa(params) {
+  try {
+    var sh  = _ss_().getSheetByName(ABA_ETP);
+    var lEt = _lerAba_(sh, 'ProcessoID');
+    var hdr = lEt.header;
+
+    var cR = hdr.indexOf('DataRealizacao◄ EDITAR') + 1; // sem espaço antes do ◄
+    var cM = hdr.indexOf('MotivoAtraso ◄ EDITAR')  + 1; // com espaço
+    var cS = hdr.indexOf('StatusEtapa ◄ EDITAR')   + 1;
+
+    if (!cR || !cS) throw new Error('Colunas não encontradas. Verifique o cabeçalho da aba Etapas.');
+
+    var dataObj = new Date(params.dataRealizacao + 'T12:00:00');
+    sh.getRange(params.linhaEtapa, cR).setValue(dataObj).setNumberFormat('DD/MM/YYYY');
+    sh.getRange(params.linhaEtapa, cS).setValue('Concluída');
+
+    if (params.motivo && params.motivo.trim() && cM) {
+      sh.getRange(params.linhaEtapa, cM).setValue(params.motivo.trim());
+    }
+
+    // Appenda no histórico imutável
+    _appendHist_({
+      ts:         new Date(),
+      pid:        params.processoId,
+      etapa:      params.nomeEtapa,
+      servidor:   params.servidor || '—',
+      motivo:     params.motivo   || '',
+      dias:       params.diasAtraso || 0,
+      dataRealiz: params.dataRealizacao
+    });
+
+    // ── Verifica transição de fase interna → externa ───────────────
+    // Detecta se esta era a última etapa da fase interna ainda não concluída.
+    // Se sim: desativa a linha de fase interna na Capacidade (Ativo = Não),
+    // sinalizando que aquele servidor concluiu sua parte e os pontos saem do cálculo.
+    var transicao = _verificarTransicaoFase_(params.processoId, params.linhaEtapa, sh, lEt, hdr);
+    _sincronizarCapacidadeComEtapas_();
+    return { ok: true, transicaoFase: transicao.feita, servidorExt: transicao.servidorExt };
+
+  } catch(e) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ── _verificarTransicaoFase_ ──────────────────────────────────────────────
+// Verifica se, após a conclusão da etapa indicada, todas as etapas de
+// Fase Interna do processo estão concluídas. Se sim, inativa a linha de
+// fase interna na Capacidade (Ativo = Não) para zerar a pontuação.
+// Retorna { feita: bool, servidorExt: string }.
+function _verificarTransicaoFase_(pid, linhaConcluidaBase1, shEtapas, lEt, hdr) {
+  var iPid = hdr.indexOf('ProcessoID');
+  var iFas = hdr.indexOf('Fase');
+  var iNom = hdr.indexOf('Etapa');
+  var iStat = hdr.indexOf('StatusEtapa ◄ EDITAR');
+  if (iPid < 0 || iFas < 0 || iStat < 0) return { feita: false, servidorExt: '' };
+
+  var hasInterna = false, allIntOk = true, hasExterna = false;
+
+  for (var j = lEt.hIdx + 1; j < lEt.values.length; j++) {
+    var er    = lEt.values[j];
+    var epid  = String(er[iPid] || '').trim();
+    if (epid !== pid) continue;
+    var efase = String(iFas >= 0 ? er[iFas] : '').trim().toLowerCase();
+    var enome = iNom >= 0 ? String(er[iNom] || '').trim() : '';
+    if (_isEtapaContratual_(efase, enome)) continue;
+    var estat = _normStatus_(String(er[iStat] || '').trim());
+    var elinha = j + 1; // 1-based
+
+    if (efase.indexOf('ext') >= 0) {
+      hasExterna = true;
+    } else {
+      hasInterna = true;
+      // A etapa que acabamos de concluir (linhaConcluidaBase1) é tratada como ok
+      if (elinha !== linhaConcluidaBase1 && estat !== 'ok' && estat !== 'na') {
+        allIntOk = false;
+      }
+    }
+  }
+
+  // Só há transição se havia fase interna, ela está toda concluída E há fase externa
+  if (!hasInterna || !allIntOk || !hasExterna) return { feita: false, servidorExt: '' };
+
+  // Desativa a linha de fase interna na Capacidade
+  var servidorExt = '';
+  try {
+    var shCap = _ss_().getSheetByName('📊 Capacidade');
+    if (!shCap) return { feita: true, servidorExt: '' };
+
+    var capData = shCap.getRange(1, 1, shCap.getLastRow(), shCap.getLastColumn()).getValues();
+    var regHdr = -1;
+    for (var ci = 0; ci < capData.length; ci++) {
+      var cr = capData[ci].map(function(c){ return String(c).trim(); });
+      if (cr[0].indexOf('Servidor') >= 0 && cr[2] === 'ProcessoID') { regHdr = ci; break; }
+    }
+    if (regHdr < 0) return { feita: true, servidorExt: '' };
+
+    var hCap  = capData[regHdr].map(function(c){ return String(c).trim(); });
+    var iAtivo = hCap.indexOf('Ativo');
+    if (iAtivo < 0) return { feita: true, servidorExt: '' };
+
+    for (var r = regHdr + 1; r < capData.length; r++) {
+      var cpid  = String(capData[r][2] || '').trim();
+      if (cpid !== pid) continue;
+      var cfase = String(capData[r][5] || '').trim().toLowerCase();
+      var cserv = String(capData[r][0] || '').trim();
+      if (cfase.indexOf('ext') >= 0) {
+        servidorExt = cserv.charAt(0).toUpperCase() + cserv.slice(1).toLowerCase();
+        shCap.getRange(r + 1, iAtivo + 1).setValue('Sim');
+      } else {
+        // Fase interna: inativa
+        shCap.getRange(r + 1, iAtivo + 1).setValue('Não');
+      }
+    }
+  } catch(e2) { /* silencioso — a conclusão em si já foi salva */ }
+
+  return { feita: true, servidorExt: servidorExt };
+}
+
+// ── getHistorico ──────────────────────────────────────────────────────────
+// Retorna todos os registros do histórico, ordenados do mais recente.
+function getHistorico() {
+  var ss = _ss_();
+  var sh = ss.getSheetByName(ABA_HIST);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var data = sh.getDataRange().getValues();
+  var r = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var pid = String(row[1] || '').trim();
+    var etapa = String(row[2] || '').trim();
+    var motivo = String(row[4] || '').trim();
+    if (!pid || !etapa || !motivo) continue;
+    r.push({
+      ts: row[0] instanceof Date ? row[0].getTime() : 0,
+      tsStr: row[0] instanceof Date ? row[0].toLocaleDateString('pt-BR') : String(row[0]),
+      pid: pid,
+      etapa: etapa,
+      servidor: String(row[3] || '').trim(),
+      motivo: motivo,
+      dias: parseInt(row[5]) || 0,
+      dataRealiz: String(row[6] || '').trim()
+    });
+  }
+  r.sort(function(a, b) { return (b.ts || 0) - (a.ts || 0); });
+  return r;
+}
+
+// ── _histMap_ ─────────────────────────────────────────────────────────────
+// Retorna mapa {processoId||nomeEtapa → entrada mais antiga com motivo}.
+// "Mais antiga" = primeira vez que o motivo foi registrado = registro imutável.
+function _histMap_() {
+  var ss = _ss_();
+  var sh = ss.getSheetByName(ABA_HIST);
+  if (!sh || sh.getLastRow() < 2) return {};
+  var data = sh.getDataRange().getValues();
+  var mapa = {};
+  // Colunas: Timestamp | ProcessoID | Etapa | Servidor | Motivo | DiasAtraso | DataRealizacao
+  for (var i = 1; i < data.length; i++) {
+    var r   = data[i];
+    var pid = String(r[1] || '').trim();
+    var nom = String(r[2] || '').trim();
+    if (!pid || !nom) continue;
+    var k   = pid + '||' + nom;
+    var mot = String(r[4] || '').trim();
+    if (mot && !mapa[k]) {   // guarda só o primeiro registro (imutável)
+      mapa[k] = {
+        ts:        r[0] instanceof Date ? r[0].getTime() : 0,
+        tsStr:     r[0] instanceof Date ? r[0].toLocaleDateString('pt-BR') : String(r[0]),
+        pid:       pid,
+        etapa:     nom,
+        servidor:  String(r[3] || '').trim(),
+        motivo:    mot,
+        dias:      parseInt(r[5]) || 0,
+        dataRealiz: String(r[6] || '').trim()
+      };
+    }
+  }
+  return mapa;
+}
+
+// ── _appendHist_ ─────────────────────────────────────────────────────────
+// Cria a aba __historico_motivos se não existir e appenda uma linha.
+// Esta aba é marcada como oculta — nunca deve ser editada manualmente.
+function _appendHist_(e) {
+  var ss = _ss_();
+  var sh = ss.getSheetByName(ABA_HIST);
+  if (!sh) {
+    sh = ss.insertSheet(ABA_HIST);
+    sh.getRange(1, 1, 1, 7).setValues([[
+      'Timestamp','ProcessoID','Etapa','Servidor','Motivo','DiasAtraso','DataRealizacao'
+    ]]);
+    sh.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#E8F0FE');
+    sh.hideSheet();
+  }
+  sh.appendRow([e.ts, e.pid, e.etapa, e.servidor, e.motivo, e.dias, e.dataRealiz]);
+}
+
+// ── enviarAvisosPrazo ─────────────────────────────────────────────────────
+// Trigger diário (10h30). Dois tipos de aviso:
+//   1. Prazo próximo  — etapa vence em até DIAS_AVISO dias úteis
+//   2. Prazo vencido  — etapa deveria ter sido concluída mas não foi
+//
+// Destinatários:
+//   Processo suspenso/paralisado:
+//     → não envia e-mail
+//   Processo aguardando requisitante:
+//     → somente Setor Requisitante, se houver EmailRequisitante cadastrado
+//   Processo da chefia (servidor responsável = chefe ou sem servidor):
+//     → Chefia do SEL + Setor Requisitante
+//   Processo de servidor:
+//     → Chefia do SEL + Servidor responsável + Setor Requisitante
+//
+// Não envia para processos concluídos (ok), planejamento/a iniciar ou suspensos.
+function enviarAvisosPrazo() {
+  var emailsConfig = getEmails();
+  var dadosRaw = getEtapasParaApp();
+  // Suporta tanto retorno antigo (array) quanto novo ({processos, filaPrevisao})
+  var dados = (dadosRaw && dadosRaw.processos) ? dadosRaw.processos : (dadosRaw || []);
+
+  var hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+
+  // Servidores que são chefes do setor — processos deles não geram e-mail separado para agente
+  var CHEFES_LISTA = getServidoresApp()
+    .filter(function(s) { return s.isChefe; })
+    .map(function(s) { return s.nome; });
+  var chefiaEmails = [];
+  CHEFES_LISTA.forEach(function(nome) {
+    var em = emailsConfig[nome] || EMAILS_SEL[nome] || '';
+    if (isChefiaEmail(em) && chefiaEmails.indexOf(em) < 0) chefiaEmails.push(em);
+  });
+  if (isChefiaEmail(CHEFIA_EMAIL) && chefiaEmails.indexOf(CHEFIA_EMAIL) < 0) {
+    chefiaEmails.push(CHEFIA_EMAIL);
+  }
+
+  function isChefiaEmail(e) { return e && e.indexOf('@') > 0 && !e.startsWith('COLE'); }
+
+  // Monta o cabeçalho HTML dos e-mails
+  function htmlHeader_(titulo, subtitulo) {
+    return '<div style="font-family:Arial,sans-serif;max-width:600px;color:#1e293b;">'
+      + '<div style="background:#1a3a5c;color:#fff;padding:14px 20px;border-radius:8px 8px 0 0;">'
+      + '<h2 style="margin:0;font-size:16px;">' + titulo + '</h2>'
+      + (subtitulo ? '<p style="margin:3px 0 0;font-size:12px;opacity:.8;">' + subtitulo + '</p>' : '')
+      + '</div><div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;padding:16px;">';
+  }
+
+  function enviar_(dest, assunto, htmlBody) {
+    if (isChefiaEmail(dest)) {
+      try {
+        MailApp.sendEmail(dest, assunto, '', { htmlBody: htmlBody + '</div></div>' });
+        return true;
+      } catch(e) {}
+    }
+    return false;
+  }
+
+  function htmlEsc_(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function isoParaBR_(iso) {
+    if (!iso) return '';
+    var p = String(iso).substring(0, 10).split('-');
+    return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : String(iso);
+  }
+
+  function linkValido_(url) {
+    url = String(url || '').trim();
+    return url && url !== '#' && /^https?:\/\//i.test(url);
+  }
+
+  function processoRefHtml_(p) {
+    var nome = htmlEsc_(p.nome || '');
+    if (p.num) {
+      var num = htmlEsc_(p.num);
+      var suap = String(p.suap || '').trim();
+      var suapHtml = linkValido_(suap)
+        ? '<a href="' + htmlEsc_(suap) + '" style="color:#1d4ed8;text-decoration:none;font-weight:700;">' + num + '</a>'
+        : '<b>' + num + '</b>';
+      return 'N° SUAP ' + suapHtml + (nome ? ' — ' + nome : '');
+    }
+    return nome ? '<b>' + nome + '</b>' : 'Processo sem identificação';
+  }
+
+  function processoRefTexto_(p) {
+    return p.num ? p.num : (p.nome || 'Processo');
+  }
+
+  function respGenerico_(nome) {
+    var n = String(nome || '').toLowerCase();
+    return !n || n.indexOf('equipe') >= 0 || n.indexOf('planejamento') >= 0;
+  }
+
+  function statusParado_(status) {
+    status = String(status || '').toLowerCase();
+    return status === 'paralisado' || status === 'suspenso';
+  }
+
+  // Classifica os avisos
+  var avisosProximos = [];
+  var avisosVencidos = [];
+
+  dados.forEach(function(p) {
+    // Pula concluídos, processos ainda não iniciados e processos suspensos/paralisados.
+    if (p.status === 'ok' || p.status === 'planejamento' || statusParado_(p.status)) return;
+
+    p.etapas.forEach(function(et) {
+      if (et.status === 'ok' || et.status === 'na' || statusParado_(et.status) || !et.fim_iso) return;
+      var fim  = new Date(et.fim_iso + 'T00:00:00');
+      var diff = _contDU_(hoje, fim); // positivo = dias até vencer; negativo = já venceu
+      var aguardaReq = p.status === 'aguardando' || et.status === 'aguardando';
+
+      if (diff >= 0 && diff <= DIAS_AVISO) {
+        avisosProximos.push({ p: p, et: et, dias: diff, aguardandoReq: aguardaReq });
+      } else if (diff < 0) {
+        avisosVencidos.push({ p: p, et: et, diasAtraso: -diff, aguardandoReq: aguardaReq });
+      }
+    });
+  });
+
+  var total = avisosProximos.length + avisosVencidos.length;
+  if (!total) return 'Nenhum aviso para enviar hoje.';
+
+  // ── Processa cada aviso individualmente ───────────────────────────────
+  var enviados = 0;
+
+  function processarAviso(av, tipo) {
+    var p  = av.p;
+    var et = av.et;
+    var faseEt = String(et.fase || '').toLowerCase();
+    var respAtual = String(et.agente || '').trim();
+    if (respGenerico_(respAtual)) {
+      respAtual = faseEt.indexOf('ext') >= 0 ? (p.servidorExt || p.servidor || '') : (p.servidor || p.servidorExt || '');
+    }
+    var procRefHtml = processoRefHtml_(p);
+    var procRefTexto = processoRefTexto_(p);
+
+    // Determina se é processo "da chefia" (chefe é o responsável ou não há servidor)
+    var isChefProc = !respAtual || CHEFES_LISTA.indexOf(respAtual) >= 0;
+
+    // Calcula nova data prevista de conclusão do processo (apenas para vencidos)
+    var novaDataConcStr = '';
+    if (tipo === 'vencido') {
+      var ultimaEtapaAtiva = null;
+      for (var ii = p.etapas.length - 1; ii >= 0; ii--) {
+        if (p.etapas[ii].status !== 'na' && p.etapas[ii].fim_iso) {
+          ultimaEtapaAtiva = p.etapas[ii]; break;
+        }
+      }
+      if (ultimaEtapaAtiva) {
+        var dataFinalBase = new Date(ultimaEtapaAtiva.fim_iso + 'T00:00:00');
+        var novaDataFinal = _addDU_(dataFinalBase, av.diasAtraso);
+        novaDataConcStr = String(novaDataFinal.getDate()).padStart(2,'0') + '/'
+          + String(novaDataFinal.getMonth()+1).padStart(2,'0') + '/'
+          + novaDataFinal.getFullYear();
+      }
+    }
+
+    // Textos dinâmicos por tipo
+    var txtPrazo, corPrazo, prefixoAssunto;
+    if (tipo === 'vencido') {
+      corPrazo      = '#dc2626';
+      txtPrazo      = '🔴 A etapa <b>' + htmlEsc_(et.nome) + '</b> sofreu <b>' + av.diasAtraso + ' dia' + (av.diasAtraso > 1 ? 's úteis' : ' útil') + '</b> de atraso'
+        + (novaDataConcStr ? '. Por conta disso, o prazo de conclusão do processo foi postergado para <b>' + novaDataConcStr + '</b>' : '')
+        + '.';
+      prefixoAssunto = '⚠️ Etapa vencida';
+    } else {
+      corPrazo      = av.dias === 0 ? '#dc2626' : '#d97706';
+      txtPrazo      = av.dias === 0 ? '🔴 Vence <b>HOJE</b>'
+                    : '🟡 Vence em <b>' + av.dias + ' dia' + (av.dias > 1 ? 's úteis' : ' útil') + '</b>';
+      prefixoAssunto = '⏰ Prazo próximo';
+    }
+
+    var bloco = '<div style="border-left:4px solid '+corPrazo+';padding:8px 12px;margin:12px 0;background:#fafafa;border-radius:0 6px 6px 0;">'
+      + procRefHtml + '<br>'
+      + 'Etapa: <b>' + htmlEsc_(et.nome) + '</b>'
+      + (respAtual ? ' · Responsável: <b>' + htmlEsc_(respAtual) + '</b>' : '')
+      + '<br>' + txtPrazo
+      + (tipo !== 'vencido' ? ' <span style="color:#64748b;font-size:12px;">(prazo: ' + isoParaBR_(et.fim_iso) + ')</span>' : '')
+      + '</div>';
+
+    if (av.aguardandoReq) {
+      if (p.emailR && p.emailR.indexOf('@') > 0) {
+        var txtAguardando = tipo === 'vencido'
+          ? 'Esta etapa está aguardando manifestação do setor requisitante e o prazo já venceu. Pedimos verificar as pendências e responder ao SEL.'
+          : 'Esta etapa está aguardando manifestação do setor requisitante e possui prazo próximo. Pedimos verificar as pendências e responder ao SEL.';
+        var bodyAguardando = htmlHeader_('Pendência do requisitante — SEL/CPII', 'Colégio Pedro II · Setor de Licitações')
+          + 'Olá!<br><br>O processo ' + procRefHtml
+          + ' está na etapa <b>' + htmlEsc_(et.nome) + '</b> e consta como <b>Aguardando requisitante</b>.<br><br>'
+          + txtAguardando
+          + '<br><br>' + bloco
+          + '<br><span style="color:#64748b;font-size:12px;">Dúvidas? Entre em contato com o SEL: ramais 2163-5762 / 5718 / 5763.</span>';
+        if (enviar_(p.emailR, 'Pendência do requisitante — ' + procRefTexto, bodyAguardando)) enviados++;
+      }
+      return;
+    }
+
+    // 1. E-mail para o servidor responsável (apenas se NÃO for processo da chefia)
+    if (!isChefProc) {
+      var emailServ = emailsConfig[respAtual] || EMAILS_SEL[respAtual] || '';
+      if (isChefiaEmail(emailServ)) {
+        var bodyServ = htmlHeader_(prefixoAssunto + ' — SEL/CPII', 'Colégio Pedro II · Setor de Licitações')
+          + 'Olá, <b>' + htmlEsc_(respAtual) + '</b>!<br><br>'
+          + (tipo === 'vencido'
+            ? 'A etapa <b>' + htmlEsc_(et.nome) + '</b> do processo ' + procRefHtml + ' está vencida e não foi concluída. Atualize o status no App de Gestão do SEL.'
+            : 'A etapa <b>' + htmlEsc_(et.nome) + '</b> do processo ' + procRefHtml + ' ' + (av.dias === 0 ? 'vence <b style="color:#dc2626;">HOJE</b>.' : 'vence em <b>' + av.dias + ' dia' + (av.dias > 1 ? 's úteis' : ' útil') + '</b>. Atualize o status no App de Gestão do SEL.'))
+          + '<br><br>' + bloco;
+        if (enviar_(emailServ, prefixoAssunto + ': ' + procRefTexto + ' — ' + et.nome, bodyServ)) enviados++;
+      }
+    }
+
+    // 2. E-mail para a chefia do SEL (sempre, com contexto completo)
+    if (chefiaEmails.length) {
+      var bodyChef = htmlHeader_(prefixoAssunto + ' — SEL/CPII', 'Colégio Pedro II · Setor de Licitações')
+        + (isChefProc ? '<b>Processo sob responsabilidade da chefia.</b><br><br>' : '')
+        + (tipo === 'vencido'
+          ? 'A etapa <b>' + htmlEsc_(et.nome) + '</b> do processo ' + procRefHtml + ' está vencida há <b>' + av.diasAtraso + ' dia' + (av.diasAtraso > 1 ? 's úteis' : ' útil') + '</b>.'
+            + (respAtual ? ' Responsável: <b>' + htmlEsc_(respAtual) + '</b>.' : ' Sem servidor designado.')
+          : 'A etapa <b>' + htmlEsc_(et.nome) + '</b> do processo ' + procRefHtml + ' '
+            + (av.dias === 0 ? 'vence <b style="color:#dc2626;">HOJE</b>.' : 'vence em <b>' + av.dias + ' dia' + (av.dias > 1 ? 's úteis' : ' útil') + '</b>.')
+            + (respAtual ? ' Responsável: <b>' + htmlEsc_(respAtual) + '</b>.' : ' Sem servidor designado.'))
+        + '<br><br>' + bloco;
+      chefiaEmails.forEach(function(emailChef) {
+        if (enviar_(emailChef, prefixoAssunto + ': ' + procRefTexto + ' — ' + et.nome, bodyChef)) enviados++;
+      });
+    }
+
+    // 3. E-mail para o setor requisitante (se tiver e-mail cadastrado)
+    if (p.emailR && p.emailR.indexOf('@') > 0) {
+      var txtReq = tipo === 'vencido'
+        ? 'Esta etapa está com o prazo vencido e será regularizada pelo Setor de Licitações em breve.'
+        : 'Esta etapa ' + (av.dias === 0 ? 'vence <b style="color:#dc2626;">hoje</b>' : 'vence em <b>' + av.dias + ' dia' + (av.dias > 1 ? 's</b>' : '</b>')) + '. Aguarde movimentações.';
+      var bodyReq = htmlHeader_('Atualização do seu processo — SEL/CPII', 'Colégio Pedro II · Setor de Licitações')
+        + 'Olá!<br><br>O processo ' + procRefHtml
+        + ' está na etapa <b>' + htmlEsc_(et.nome) + '</b>.<br><br>'
+        + txtReq
+        + '<br><br><span style="color:#64748b;font-size:12px;">Dúvidas? Entre em contato com o SEL: ramais 2163-5762 / 5718 / 5763.</span>';
+      if (enviar_(p.emailR, prefixoAssunto + ' — ' + p.nome, bodyReq)) enviados++;
+    }
+  }
+
+  avisosProximos.forEach(function(av) { processarAviso(av, 'proximo'); });
+  avisosVencidos.forEach(function(av) { processarAviso(av, 'vencido'); });
+
+  return 'E-mails enviados: ' + enviados + ' (' + avisosProximos.length + ' próximos + ' + avisosVencidos.length + ' vencidos).';
+}
+
+// ── cadastrarProcesso ─────────────────────────────────────────────────────
+// Chamada pelo app ao confirmar um novo processo.
+// params: {objeto, modalidade, d0 (YYYY-MM-DD), nroSuap, temIRP ('Sim'|'Não'),
+//          setor, emailReq, linkSuap, respInterno, respExterno, servidor}
+// Lógica espelha novoProcesso() do Codigo_v3.gs, sem prompts de UI.
+function cadastrarProcesso(params) {
+  try {
+    var ss  = _ss_();
+    var shP = ss.getSheetByName(ABA_PROC);
+    var shE = ss.getSheetByName(ABA_ETP);
+    var modalidadeSegregada = _isModalidadeExtSegregada_(params.modalidade);
+    if (modalidadeSegregada && params.respInterno && params.respExterno && params.respInterno === params.respExterno) {
+      throw new Error('Fase interna e fase externa precisam ter responsáveis diferentes em Pregão/Concorrência.');
+    }
+
+    // ── Lê cabeçalho de Processos ─────────────────────────────────
+    var lP   = _garantirColunas_(shP, 'ProcessoID', ['Setor Requisitante', 'EmailRequisitante']);
+    var hP   = lP.header;
+    var hMap = {};
+    hP.forEach(function(h, i) { hMap[h] = i; });
+    var colID = hMap['ProcessoID'];
+    if (colID === undefined) throw new Error('Coluna ProcessoID não encontrada em Processos.');
+
+    // ── Gera próximo ProcessoID: SEL-AAAA-NNN ─────────────────────
+    var ano     = new Date().getFullYear();
+    var prefixo = 'SEL-' + ano + '-';
+    var maxSeq  = 0;
+    for (var i = lP.hIdx + 1; i < lP.values.length; i++) {
+      var pid = String(lP.values[i][colID] || '').trim();
+      if (pid.indexOf(prefixo) === 0) {
+        var seq = parseInt(pid.substring(prefixo.length)) || 0;
+        if (seq > maxSeq) maxSeq = seq;
+      }
+    }
+    var novoPID = prefixo + String(maxSeq + 1).padStart(3, '0');
+
+    // ── Encontra primeira linha vazia em Processos ─────────────────
+    var primeiraP = lP.startRow;
+    var limiteP   = Math.min(shP.getMaxRows() - primeiraP + 1, 150);
+    var blocoP    = shP.getRange(primeiraP, 1, limiteP, hP.length).getValues();
+    var linhaProc = -1;
+    for (var pi = 0; pi < blocoP.length; pi++) {
+      if (String(blocoP[pi][colID] || '').trim() === '') {
+        linhaProc = primeiraP + pi; break;
+      }
+    }
+    if (linhaProc < 0) throw new Error('Sem espaço disponível na aba Processos.');
+
+    // ── Monta e grava linha do processo ───────────────────────────
+    var d0Obj    = params.d0 ? new Date(params.d0 + 'T12:00:00') : null;
+    var novaLinha = new Array(hP.length).fill('');
+    function set_(col, val) { if (hMap[col] !== undefined) novaLinha[hMap[col]] = val; }
+    set_('ProcessoID',         novoPID);
+    set_('N° SUAP',            params.nroSuap  || '');
+    set_('Objeto',             params.objeto);
+    set_('Modalidade',         params.modalidade);
+    set_('D0 (Data Abertura)', d0Obj || '');
+    set_('Tem IRP?',           params.temIRP   || 'Não');
+    set_('Setor Requisitante', params.setor    || '');
+    set_('Link SUAP',          params.linkSuap || '#');
+    set_('EmailRequisitante',  params.emailReq || '');
+    set_('Status',             d0Obj ? 'Em planejamento' : 'Fila');
+
+    shP.getRange(linhaProc, 1, 1, hP.length).setValues([novaLinha]);
+    if (d0Obj && hMap['D0 (Data Abertura)'] !== undefined) {
+      shP.getRange(linhaProc, hMap['D0 (Data Abertura)'] + 1).setNumberFormat('DD/MM/YYYY');
+    }
+
+    // ── Localiza primeiro bloco vazio na aba Etapas ───────────────
+    var lE       = _lerAba_(shE, 'ProcessoID');
+    var hE       = lE.header;
+    var colProcE = hE.indexOf('ProcessoID');
+    var colOrdE  = hE.indexOf('Ord.');
+    if (colProcE < 0) throw new Error('Coluna ProcessoID não encontrada em Etapas.');
+
+    var primeiraE = lE.startRow;
+    var limiteE   = Math.min(shE.getMaxRows() - primeiraE + 1, 1100);
+    var blocoE    = shE.getRange(primeiraE, 1, limiteE, hE.length).getValues();
+    var sepRow    = -1;
+    for (var ri = 0; ri < blocoE.length; ri++) {
+      var ordV = String(blocoE[ri][colOrdE >= 0 ? colOrdE : 0] || '').trim();
+      var pidV = String(blocoE[ri][colProcE] || '').trim();
+      if (ordV === '' && pidV === '') { sepRow = primeiraE + ri; break; }
+    }
+    if (sepRow < 0) throw new Error('Sem blocos disponíveis na aba Etapas (todos os 100 slots usados).');
+
+    // ── Preenche bloco ─────────────────────────────────────────────
+    // Separador (1ª linha do bloco): nome do objeto
+    shE.getRange(sepRow, 1).setValue(params.objeto);
+
+    // ProcessoID nas 9 linhas de etapa abaixo do separador
+    shE.getRange(sepRow + 1, colProcE + 1, 9, 1).setValue(novoPID);
+
+    // Agentes responsáveis
+    var colAg = hE.indexOf('Agente Responsável');
+    var ehPE  = modalidadeSegregada;
+    if (colAg >= 0) {
+      shE.getRange(sepRow + 1, colAg + 1, 7, 1).setValue(params.respInterno || '');
+      var agExt = (ehPE && params.respExterno) ? params.respExterno : (params.respInterno || '');
+      shE.getRange(sepRow + 8, colAg + 1).setValue(agExt);
+      // Etapa 9 (Assinatura contrato/ARP): agente do setor de contratos — deixa como está no modelo
+    }
+
+    // Etapa 4 — IRP: "Não se aplica" quando não tem IRP
+    var colSt = hE.indexOf('StatusEtapa ◄ EDITAR');
+    if (params.temIRP !== 'Sim' && colSt >= 0) {
+      shE.getRange(sepRow + 4, colSt + 1).setValue('Não se aplica');
+    }
+
+    // Etapa 8 — Fase externa: ajusta nome e prazo conforme modalidade
+    // (bloco pré-formatado assume Pregão Eletrônico como padrão)
+    if (params.modalidade !== 'Pregão Eletrônico') {
+      var colNm = hE.indexOf('Etapa');
+      var colPz = hE.indexOf('Prazo (dias)');
+      var faseNome  = 'Fase externa — ' + params.modalidade;
+      var fasePrazo = params.modalidade === 'Concorrência' ? 100 : 30;
+      if (colNm >= 0) shE.getRange(sepRow + 8, colNm + 1).setValue(faseNome);
+      if (colPz >= 0) shE.getRange(sepRow + 8, colPz + 1).setValue(fasePrazo);
+    }
+
+    // ── Nomes atualizados das etapas (sobrescreve o modelo da planilha) ───
+    var colNm2 = hE.indexOf('Etapa');
+    if (colNm2 >= 0) {
+      shE.getRange(sepRow + 5, colNm2 + 1).setValue('Adequações finais dos documentos e envio à Procuradoria');
+      shE.getRange(sepRow + 6, colNm2 + 1).setValue('Versão final do TR e demais documentos aprovados');
+      shE.getRange(sepRow + 7, colNm2 + 1).setValue('Envio ao SEL/SEPMA (Recebimento de processo, cadastro e publicação da licitação)');
+    }
+    // ── Etapa 9 — Assinatura contrato: Não se aplica (responsabilidade de Contratos/Jurídico)
+    if (colSt >= 0) {
+      shE.getRange(sepRow + 9, colSt + 1).setValue('Não se aplica');
+    }
+
+    return { ok: true, pid: novoPID };
+  } catch(e) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ── migrarNomesEtapas ─────────────────────────────────────────────────────
+// Executa UMA VEZ para atualizar etapas já cadastradas na planilha:
+//   • Renomeia "Adequações finais", "Versão final do TR" e "Envio ao SEL/SEPMA"
+//   • Define "Assinatura contrato / Ata (ARP)" como Não se aplica
+// Chamada pelo botão na aba Config do app.
+function migrarNomesEtapas() {
+  try {
+    var sh  = _ss_().getSheetByName(ABA_ETP);
+    var lE  = _lerAba_(sh, 'ProcessoID');
+    var hdr = lE.header;
+    var iNome = hdr.indexOf('Etapa');
+    var iStat = hdr.indexOf('StatusEtapa ◄ EDITAR');
+    if (iNome < 0) return { ok: false, erro: 'Coluna "Etapa" não encontrada.' };
+
+    var RENOMES = {
+      'Adequações finais':   'Adequações finais dos documentos e envio à Procuradoria',
+      'Versão final do TR':  'Versão final do TR e demais documentos aprovados',
+      'Envio ao SEL/SEPMA':  'Envio ao SEL/SEPMA (Recebimento de processo, cadastro e publicação da licitação)'
+    };
+
+    var renomeados = 0, naAplicados = 0;
+
+    for (var j = lE.hIdx + 1; j < lE.values.length; j++) {
+      var nome = String(lE.values[j][iNome] || '').trim();
+      if (!nome) continue;
+
+      // Renomear etapas
+      for (var antigo in RENOMES) {
+        if (nome === antigo || nome.indexOf(antigo) === 0) {
+          sh.getRange(j + 1, iNome + 1).setValue(RENOMES[antigo]);
+          renomeados++;
+          break;
+        }
+      }
+
+      // Assinatura → Não se aplica (salvo se já concluída)
+      if (nome.toLowerCase().indexOf('assinatura') >= 0 && iStat >= 0) {
+        var stAtual = _normStatus_(String(lE.values[j][iStat] || '').trim());
+        if (stAtual !== 'ok') {
+          sh.getRange(j + 1, iStat + 1).setValue('Não se aplica');
+          naAplicados++;
+        }
+      }
+    }
+
+    return { ok: true, msg: renomeados + ' etapas renomeadas, ' + naAplicados + ' assinaturas marcadas como N/A.' };
+  } catch(e) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+function _sincronizarCapacidadeComEtapas_() {
+  try {
+    var ss = _ss_();
+    var shP = ss.getSheetByName(ABA_PROC);
+    var shE = ss.getSheetByName(ABA_ETP);
+    var shC = ss.getSheetByName('📊 Capacidade');
+    if (!shP || !shE || !shC) return { criados: 0, reativados: 0 };
+
+    var lP = _garantirColunas_(shP, 'ProcessoID', ['Setor Requisitante', 'EmailRequisitante']);
+    var hP = lP.header;
+    var iP = {
+      id: hP.indexOf('ProcessoID'),
+      nome: hP.indexOf('Objeto'),
+      modal: hP.indexOf('Modalidade'),
+      d0: hP.indexOf('D0 (Data Abertura)')
+    };
+    if (iP.id < 0) return { criados: 0, reativados: 0 };
+
+    var procMap = {};
+    for (var p = lP.hIdx + 1; p < lP.values.length; p++) {
+      var pr = lP.values[p];
+      var pidP = String(pr[iP.id] || '').trim();
+      if (!pidP) continue;
+      procMap[pidP] = {
+        nome: iP.nome >= 0 ? String(pr[iP.nome] || '').trim() : '',
+        modal: iP.modal >= 0 ? String(pr[iP.modal] || '').trim() : '',
+        temD0: iP.d0 >= 0 && !!_parseDate_(pr[iP.d0])
+      };
+    }
+
+    var lE = _lerAba_(shE, 'ProcessoID');
+    var hE = lE.header;
+    var iE = {
+      pid: hE.indexOf('ProcessoID'),
+      nome: hE.indexOf('Etapa'),
+      agente: hE.indexOf('Agente Responsável'),
+      fase: hE.indexOf('Fase'),
+      status: hE.indexOf('StatusEtapa ◄ EDITAR')
+    };
+    if (iE.pid < 0 || iE.agente < 0 || iE.status < 0) return { criados: 0, reativados: 0 };
+
+    var etapas = {};
+    for (var e = lE.hIdx + 1; e < lE.values.length; e++) {
+      var er = lE.values[e];
+      var pidE = String(er[iE.pid] || '').trim();
+      if (!pidE) continue;
+      var nomeE = iE.nome >= 0 ? String(er[iE.nome] || '').trim() : '';
+      var faseE = iE.fase >= 0 ? String(er[iE.fase] || '').trim() : '';
+      if (_isEtapaContratual_(faseE, nomeE)) continue;
+      if (!etapas[pidE]) etapas[pidE] = [];
+      etapas[pidE].push({
+        agente: String(er[iE.agente] || '').trim(),
+        fase: faseE,
+        status: _normStatus_(er[iE.status])
+      });
+    }
+
+    var capData = shC.getRange(1, 1, shC.getLastRow(), shC.getLastColumn()).getValues();
+    var regHdr = -1;
+    for (var c = 0; c < capData.length; c++) {
+      var cr = capData[c].map(function(v){ return String(v).trim(); });
+      if (cr[0].indexOf('Servidor') >= 0 && cr[2] === 'ProcessoID') { regHdr = c; break; }
+    }
+    if (regHdr < 0) return { criados: 0, reativados: 0 };
+    var hC = capData[regHdr].map(function(v){ return String(v).trim(); });
+    var iAtivo = hC.indexOf('Ativo');
+    if (iAtivo < 0) return { criados: 0, reativados: 0 };
+
+    var capMap = {};
+    var firstEmpty = -1;
+    var servValidos = _servidoresValidosMap_();
+    for (var r = regHdr + 1; r < capData.length; r++) {
+      var row = capData[r];
+      var serv = String(row[0] || '').trim();
+      var pid = String(row[2] || '').trim();
+      if (!serv && !pid && firstEmpty < 0) firstEmpty = r + 1;
+      if (!pid) continue;
+      var fase = String(row[5] || '').trim().toLowerCase();
+      var kind = fase.indexOf('ext') >= 0 ? 'ext' : 'int';
+      capMap[pid + '|' + kind] = { row: r + 1, ativo: row[3], servidor: serv };
+    }
+
+    var criados = 0, reativados = 0;
+    Object.keys(etapas).forEach(function(pid) {
+      var proc = procMap[pid];
+      if (!proc || !proc.temD0) return;
+      var lista = etapas[pid];
+      var concl = 0, aplicaveis = 0, atual = null, primeiraPendente = null;
+      for (var i = 0; i < lista.length; i++) {
+        var st = lista[i].status;
+        if (st !== 'na') aplicaveis++;
+        if (st === 'ok') concl++;
+        if (!atual && ['andamento','aguardando','paralisado','atrasado'].indexOf(st) >= 0) atual = lista[i];
+        if (!primeiraPendente && st === 'pendente') primeiraPendente = lista[i];
+      }
+      var concluido = aplicaveis > 0 && concl >= aplicaveis;
+      if (concluido) {
+        ['int','ext'].forEach(function(k) {
+          var doneKey = pid + '|' + k;
+          if (capMap[doneKey] && _isSim_(capMap[doneKey].ativo)) {
+            shC.getRange(capMap[doneKey].row, iAtivo + 1).setValue('Não');
+          }
+        });
+        return;
+      }
+      if (!atual && concl > 0) atual = primeiraPendente;
+      if (!atual || !atual.agente) return;
+
+      var isExt = String(atual.fase || '').toLowerCase().indexOf('ext') >= 0;
+      var kind = isExt ? 'ext' : 'int';
+      var key = pid + '|' + kind;
+      var outroKey = pid + '|' + (isExt ? 'int' : 'ext');
+      var agenteKey = String(atual.agente || '').trim().toLowerCase();
+      var agenteValido = servValidos[agenteKey];
+      if (!agenteValido) return;
+      if (capMap[outroKey]) {
+        if (_isSim_(capMap[outroKey].ativo)) {
+          shC.getRange(capMap[outroKey].row, iAtivo + 1).setValue('Não');
+        }
+      }
+
+      if (capMap[key]) {
+        if (String(capMap[key].servidor || '').trim().toLowerCase() !== agenteKey) {
+          var cellServ = shC.getRange(capMap[key].row, 1);
+          var dvServ = cellServ.getDataValidation();
+          cellServ.clearDataValidations().setValue(agenteValido);
+          if (dvServ) cellServ.setDataValidation(dvServ);
+        }
+        if (!_isSim_(capMap[key].ativo)) {
+          shC.getRange(capMap[key].row, iAtivo + 1).setValue('Sim');
+          reativados++;
+        }
+        return;
+      }
+
+      var targetRow = firstEmpty > 0 ? firstEmpty : shC.getLastRow() + 1;
+      var values = [[
+        agenteValido,
+        proc.nome,
+        pid,
+        'Sim',
+        proc.modal,
+        isExt ? 'Fase Externa' : 'Fase Interna',
+        0, 0, 0, ''
+      ]];
+      var rng = shC.getRange(targetRow, 1, 1, 10);
+      var dvs = rng.getDataValidations();
+      rng.clearDataValidations().setValues(values);
+      rng.setDataValidations(dvs);
+      shC.getRange(targetRow, 10).setFormula('=SUM(G' + targetRow + ':I' + targetRow + ')');
+      capMap[key] = { row: targetRow, ativo: 'Sim' };
+      firstEmpty = -1;
+      criados++;
+    });
+
+    return { criados: criados, reativados: reativados };
+  } catch(e) {
+    return { criados: 0, reativados: 0, erro: e.message };
+  }
+}
+
+// ── getCapacidadeApp ──────────────────────────────────────────────────────
+// Lê a aba 📊 Capacidade e retorna:
+//   resumoInt / resumoExt  — resumo por servidor (Fase Interna / Externa)
+//   registrosInt / registrosExt — processos separados por fase
+function getCapacidadeApp() {
+  var sh = _ss_().getSheetByName('📊 Capacidade');
+  if (!sh) return null;
+  _corrigirProcessoIdsBlocosEtapas_();
+  _marcarEtapasContratuaisNA_();
+  _sincronizarCapacidadeComEtapas_();
+  var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+
+  function titleCase_(s) {
+    s = String(s||'').trim();
+    return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  }
+  function parseNum_(v) {
+    if (typeof v === 'number') return v;
+    return parseFloat(String(v || '0').replace(',', '.')) || 0;
+  }
+  function round1_(n) {
+    return Math.round((n || 0) * 10) / 10;
+  }
+  // Sheets retorna percentagem como decimal (1.5 = 150%). Converte.
+  function parsePct_(v) {
+    if (typeof v === 'number') return v > 2 ? v : Math.round(v * 100);
+    return parseNum_(String(v||'0').replace('%',''));
+  }
+  function recalcularResumo_(resumo, registros) {
+    var soma = {};
+    registros.forEach(function(r) {
+      if (r.ativo !== 'Sim') return;
+      if (r.concluido) return;
+      var key = _normServidorNome_(r.servidor);
+      soma[key] = (soma[key] || 0) + r.total;
+    });
+    resumo.forEach(function(s) {
+      var processos = soma[_normServidorNome_(s.servidor)] || 0;
+      s.processos = round1_(processos);
+      s.total = round1_(s.processos + s.outros);
+      s.pct = s.teto ? round1_(s.total / s.teto * 100) : 0;
+      s.status = s.pct >= 90 ? 'Crítico' : (s.pct >= 60 ? 'Atenção' : 'Disponível');
+    });
+  }
+
+  // Mapa pid → emailR lido de fProcessos para enriquecer os registros de capacidade
+  var emailMapCap = {};
+  (function() {
+    var ss2 = _ss_();
+    var shP = ss2.getSheetByName(ABA_PROC);
+    if (!shP) return;
+    var lP2 = _lerAba_(shP, 'ProcessoID');
+    var hP2 = lP2.header;
+    var iId = hP2.indexOf('ProcessoID');
+    var iEm = hP2.indexOf('EmailRequisitante');
+    if (iId < 0 || iEm < 0) return;
+    for (var rr2 = lP2.hIdx + 1; rr2 < lP2.values.length; rr2++) {
+      var rowP = lP2.values[rr2];
+      var pid2 = String(rowP[iId]||'').trim();
+      if (pid2) emailMapCap[pid2] = String(rowP[iEm]||'').trim();
+    }
+  })();
+
+  var procConcluidoCap = {};
+  (function() {
+    var ss3 = _ss_();
+    var shE3 = ss3.getSheetByName(ABA_ETP);
+    if (!shE3) return;
+    var lE3 = _lerAba_(shE3, 'ProcessoID');
+    var hE3 = lE3.header;
+    var iPid3 = hE3.indexOf('ProcessoID');
+    var iNome3 = hE3.indexOf('Etapa');
+    var iFase3 = hE3.indexOf('Fase');
+    var iStatus3 = hE3.indexOf('StatusEtapa ◄ EDITAR');
+    if (iPid3 < 0 || iStatus3 < 0) return;
+    var accConcl = {};
+    for (var e3 = lE3.hIdx + 1; e3 < lE3.values.length; e3++) {
+      var rowE3 = lE3.values[e3];
+      var pid3 = String(rowE3[iPid3] || '').trim();
+      if (!pid3) continue;
+      var nome3 = iNome3 >= 0 ? String(rowE3[iNome3] || '').trim() : '';
+      var fase3 = iFase3 >= 0 ? String(rowE3[iFase3] || '').trim() : '';
+      if (_isEtapaContratual_(fase3, nome3)) continue;
+      var st3 = _normStatus_(rowE3[iStatus3]);
+      if (st3 === 'na') continue;
+      if (!accConcl[pid3]) accConcl[pid3] = { total: 0, ok: 0 };
+      accConcl[pid3].total++;
+      if (st3 === 'ok') accConcl[pid3].ok++;
+    }
+    Object.keys(accConcl).forEach(function(pid3) {
+      procConcluidoCap[pid3] = accConcl[pid3].total > 0 && accConcl[pid3].ok >= accConcl[pid3].total;
+    });
+  })();
+
+  var resumoInt = [], resumoExt = [], registrosInt = [], registrosExt = [];
+  var sumHdrRow = -1, regHdrRow = -1;
+
+  for (var r = 0; r < data.length; r++) {
+    var rr = data[r].map(function(c){ return String(c).trim(); });
+    if (sumHdrRow < 0 && rr[0] === 'Servidor' && rr[1].indexOf('Outros') >= 0) sumHdrRow = r;
+    if (regHdrRow < 0 && rr[0].indexOf('Servidor') >= 0 && rr[2] === 'ProcessoID') regHdrRow = r;
+    if (sumHdrRow >= 0 && regHdrRow >= 0) break;
+  }
+
+  var propsCap = PropertiesService.getScriptProperties();
+  var resumoRowsInt = {};
+  var resumoRowsExt = {};
+  if (sumHdrRow >= 0) {
+    var limiteResumo = regHdrRow > sumHdrRow ? regHdrRow : data.length;
+    for (var s = sumHdrRow + 1; s < limiteResumo; s++) {
+      var row = data[s] || [];
+      var nome = String(row[0]||'').trim();
+      if (nome && nome.toUpperCase().indexOf('TOTAL') < 0) {
+        resumoRowsInt[_normServidorNome_(nome)] = {
+          servidor:  titleCase_(nome),
+          outros:    parseNum_(row[1]),
+          linhaSum:  s + 1,
+          colOutros: 2,
+          total:     parseNum_(row[3]),
+          teto:      parseNum_(row[4]) || 8,
+          pct:       parsePct_(row[6]),
+          status:    String(row[7]||'').replace(/[⛔⚠✅🟢🟡🔴]/g,'').trim()
+        };
+      }
+      var nomeExt = String(row[9]||'').trim();
+      if (nomeExt && nomeExt.toUpperCase().indexOf('TOTAL') < 0) {
+        resumoRowsExt[_normServidorNome_(nomeExt)] = {
+          servidor:  titleCase_(nomeExt),
+          outros:    parseNum_(row[10]),
+          linhaSum:  s + 1,
+          colOutros: 11,
+          total:     parseNum_(row[12]),
+          teto:      parseNum_(row[13]) || 8,
+          pct:       parsePct_(row[15]),
+          status:    String(row[16]||'').replace(/[⛔⚠✅🟢🟡🔴]/g,'').trim()
+        };
+      }
+    }
+  }
+
+  function montarResumoDinamico_(fase, mapa) {
+    var listaServ = getServidoresApp();
+    return listaServ.map(function(srv) {
+      var key = _normServidorNome_(srv.nome);
+      var base = mapa[key] || {};
+      var propKey = _propKeyServidor_('cap_outros_' + fase, srv.nome);
+      var outrosProp = propsCap.getProperty(propKey);
+      return {
+        servidor:  srv.nome,
+        outros:    base.linhaSum ? base.outros : parseNum_(outrosProp),
+        linhaSum:  base.linhaSum || '',
+        colOutros: fase === 'int' ? 2 : 11,
+        total:     base.total || 0,
+        teto:      base.teto || 8,
+        pct:       base.pct || 0,
+        status:    base.status || 'Disponível'
+      };
+    });
+  }
+
+  resumoInt = montarResumoDinamico_('int', resumoRowsInt);
+  resumoExt = montarResumoDinamico_('ext', resumoRowsExt);
+
+  // Registro de processos (separado por fase)
+  if (regHdrRow >= 0) {
+    for (var r2 = regHdrRow + 1; r2 < data.length; r2++) {
+      var row2 = data[r2];
+      var serv = String(row2[0]||'').trim();
+      var pid  = String(row2[2]||'').trim();
+      if (!serv || !pid) continue;
+      if (procConcluidoCap[pid]) continue;
+      var fase = String(row2[5]||'').trim();
+      var pts11 = parseNum_(row2[6]);
+      var pts12 = parseNum_(row2[7]);
+      var pts23 = parseNum_(row2[8]);
+      var rec  = {
+        linha:    r2 + 1,
+        pid:      pid,
+        servidor: titleCase_(serv),
+        objeto:   String(row2[1]||'').trim(),
+        modal:    String(row2[4]||'').trim(),
+        fase:     fase,
+        ativo:    _isSim_(row2[3]) ? 'Sim' : 'Não',
+        pts11:    pts11,
+        pts12:    pts12,
+        pts23:    pts23,
+        total:    round1_(pts11 + pts12 + pts23),
+        emailR:   emailMapCap[pid] || '',
+        concluido: !!procConcluidoCap[pid]
+      };
+      if (fase.toLowerCase().indexOf('ext') >= 0) registrosExt.push(rec);
+      else registrosInt.push(rec);
+    }
+  }
+
+  recalcularResumo_(resumoInt, registrosInt);
+  recalcularResumo_(resumoExt, registrosExt);
+
+  return { resumoInt: resumoInt, resumoExt: resumoExt,
+           registrosInt: registrosInt, registrosExt: registrosExt };
+}
+
+// ── salvarEmailProcesso ───────────────────────────────────────────────────────
+// Grava o EmailRequisitante de um processo na aba fProcessos.
+// params: pid (ProcessoID), email (string)
+function salvarEmailProcesso(pid, email) {
+  try {
+    var shP = _ss_().getSheetByName(ABA_PROC);
+    if (!shP) throw new Error('Aba Processos não encontrada.');
+    var lP = _garantirColunas_(shP, 'ProcessoID', ['Setor Requisitante', 'EmailRequisitante']);
+    var hP = lP.header;
+    var iId = hP.indexOf('ProcessoID');
+    var iEm = hP.indexOf('EmailRequisitante');
+    if (iId < 0 || iEm < 0) throw new Error('Coluna ProcessoID ou EmailRequisitante não encontrada.');
+    for (var i = lP.hIdx + 1; i < lP.values.length; i++) {
+      if (String(lP.values[i][iId]||'').trim() === pid) {
+        shP.getRange(i + 1, iEm + 1).setValue(email.trim());
+        return { ok: true };
+      }
+    }
+    throw new Error('Processo ' + pid + ' não encontrado.');
+  } catch(e) { return { ok: false, erro: e.message }; }
+}
+
+// ── trocarServidor ────────────────────────────────────────────────────────────
+// Atualiza o servidor responsável de um processo na aba 📊 Capacidade (col A).
+// pid: ProcessoID; novoServidor: nome ou '' para remover.
+function trocarServidor(pid, novoServidor) {
+  try {
+    var sh = _ss_().getSheetByName('📊 Capacidade');
+    if (!sh) throw new Error('Aba Capacidade não encontrada.');
+    var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+    var regHdr = -1;
+    for (var r = 0; r < data.length; r++) {
+      var rr = data[r].map(function(c){ return String(c).trim(); });
+      if (rr[0].indexOf('Servidor') >= 0 && rr[2] === 'ProcessoID') { regHdr = r; break; }
+    }
+    if (regHdr < 0) throw new Error('Cabeçalho de processos não encontrado na aba Capacidade.');
+    for (var r2 = regHdr + 1; r2 < data.length; r2++) {
+      if (String(data[r2][2]||'').trim() === pid) {
+        var cell = sh.getRange(r2 + 1, 1);
+        // Remove validação temporariamente para aceitar qualquer valor, depois restaura
+        var dv = cell.getDataValidation();
+        cell.clearDataValidations().setValue(novoServidor || '');
+        if (dv) cell.setDataValidation(dv);
+        return { ok: true };
+      }
+    }
+    // Processo não encontrado na Capacidade — retorna ok sem erro (servidor mantido apenas localmente)
+    return { ok: true, aviso: 'Processo não encontrado na aba Capacidade — servidor atualizado apenas localmente.' };
+  } catch(e) { return { ok: false, erro: e.message }; }
+}
+
+// ── atualizarStatusEtapa ──────────────────────────────────────────────────────
+// Grava o novo status de uma etapa na aba fEtapas sem concluí-la.
+// linha: número 1-based da linha na planilha; novoStatus: string do status.
+function atualizarStatusEtapa(linha, novoStatus) {
+  try {
+    var sh = _ss_().getSheetByName(ABA_ETP);
+    if (!sh) throw new Error('Aba Etapas não encontrada.');
+    var lE = _lerAba_(sh, 'ProcessoID');
+    var iStatus = lE.header.indexOf('StatusEtapa ◄ EDITAR');
+    var iPid = lE.header.indexOf('ProcessoID');
+    var iFase = lE.header.indexOf('Fase');
+    if (iStatus < 0) throw new Error('Coluna StatusEtapa não encontrada.');
+    sh.getRange(linha, iStatus + 1).setValue(_statusPlanilha_(novoStatus));
+    var rowVals = lE.values[linha - 1] || [];
+    var pid = iPid >= 0 ? String(rowVals[iPid] || '').trim() : '';
+    var fase = iFase >= 0 ? String(rowVals[iFase] || '').trim() : '';
+    var stNorm = _normStatus_(novoStatus);
+    if (pid && fase && ['andamento','aguardando','paralisado','atrasado','pendente'].indexOf(stNorm) >= 0) {
+      _setCapacidadeAtivo_(pid, fase, 'Sim');
+    }
+    _sincronizarCapacidadeComEtapas_();
+    return { ok: true };
+  } catch(e) { return { ok: false, erro: e.message }; }
+}
+
+// ── salvarOutrosCap ───────────────────────────────────────────────────────────
+// Reabre a etapa concluída imediatamente anterior e registra justificativa.
+function regredirEtapa(params) {
+  try {
+    params = params || {};
+    var pid = String(params.processoId || '').trim();
+    var linhaAtual = parseInt(params.linhaEtapaAtual, 10);
+    var motivo = String(params.motivo || '').trim();
+    var servidor = String(params.servidor || '').trim() || '—';
+    if (!pid) throw new Error('Processo não informado.');
+    if (!linhaAtual) throw new Error('Linha da etapa atual não informada.');
+    if (motivo.length < 8) throw new Error('Informe uma justificativa para a regressão.');
+
+    var sh = _ss_().getSheetByName(ABA_ETP);
+    if (!sh) throw new Error('Aba Etapas não encontrada.');
+    var lE = _lerAba_(sh, 'ProcessoID');
+    var hdr = lE.header;
+    var iPid = hdr.indexOf('ProcessoID');
+    var iNome = hdr.indexOf('Etapa');
+    var iFase = hdr.indexOf('Fase');
+    var iStatus = hdr.indexOf('StatusEtapa ◄ EDITAR');
+    var iMotivo = hdr.indexOf('MotivoAtraso ◄ EDITAR');
+    var iData = hdr.indexOf('DataRealizacao◄ EDITAR');
+    if (iPid < 0 || iNome < 0 || iStatus < 0) throw new Error('Colunas obrigatórias não encontradas na aba Etapas.');
+
+    var idxAtual = linhaAtual - 1;
+    var rowAtual = lE.values[idxAtual] || [];
+    if (String(rowAtual[iPid] || '').trim() !== pid) throw new Error('A etapa atual não pertence ao processo informado.');
+
+    var idxAnterior = -1;
+    for (var i = idxAtual - 1; i > lE.hIdx; i--) {
+      var r = lE.values[i] || [];
+      if (String(r[iPid] || '').trim() !== pid) continue;
+      var fase = iFase >= 0 ? String(r[iFase] || '').trim() : '';
+      var nome = String(r[iNome] || '').trim();
+      if (_isEtapaContratual_(fase, nome)) continue;
+      if (_normStatus_(String(r[iStatus] || '').trim()) === 'na') continue;
+      idxAnterior = i;
+      break;
+    }
+    if (idxAnterior < 0) throw new Error('Não há etapa anterior aplicável para reabrir.');
+
+    var linhaAnterior = idxAnterior + 1;
+    var nomeAnterior = String(lE.values[idxAnterior][iNome] || '').trim();
+    var nomeAtual = String(rowAtual[iNome] || params.etapaAtual || '').trim();
+
+    sh.getRange(linhaAnterior, iStatus + 1).setValue('Em andamento');
+    if (iData >= 0) sh.getRange(linhaAnterior, iData + 1).clearContent();
+    if (iMotivo >= 0) sh.getRange(linhaAnterior, iMotivo + 1).clearContent();
+
+    if (linhaAtual !== linhaAnterior) {
+      sh.getRange(linhaAtual, iStatus + 1).setValue('Não iniciada');
+      if (iData >= 0) sh.getRange(linhaAtual, iData + 1).clearContent();
+      if (iMotivo >= 0) sh.getRange(linhaAtual, iMotivo + 1).clearContent();
+    }
+
+    _appendHist_({
+      ts: new Date(),
+      pid: pid,
+      etapa: nomeAnterior,
+      servidor: servidor,
+      motivo: 'REGRESSAO: ' + motivo + (nomeAtual ? ' | etapa atual: ' + nomeAtual : ''),
+      dias: 0,
+      dataRealiz: ''
+    });
+
+    _sincronizarCapacidadeComEtapas_();
+    return { ok: true, etapaReaberta: nomeAnterior, etapaAtual: nomeAtual };
+  } catch(e) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// params: {linha (1-based), valor, col (2=interna / 11=externa)}
+function salvarOutrosCap(params) {
+  try {
+    var sh = _ss_().getSheetByName('📊 Capacidade');
+    if (!sh) throw new Error('Aba Capacidade não encontrada.');
+    var linha = parseInt(params.linha, 10);
+    var col = parseInt(params.col || 2, 10);
+    var valor = params.valor || 0;
+    if (linha > 0 && col > 0) {
+      sh.getRange(linha, col).setValue(valor);
+    } else if (params.servidor) {
+      var fase = String(params.fase || 'int').toLowerCase().indexOf('ext') >= 0 ? 'ext' : 'int';
+      PropertiesService.getScriptProperties()
+        .setProperty(_propKeyServidor_('cap_outros_' + fase, params.servidor), String(valor));
+    } else {
+      throw new Error('Servidor não informado para salvar Outros.');
+    }
+    return { ok: true };
+  } catch(e) { return { ok: false, erro: e.message }; }
+}
+
+// ── salvarPontuacaoCap ────────────────────────────────────────────────────────
+// Grava pontuação guiada de um processo na aba Capacidade.
+// params: {linha (1-based), pts11, pts12, pts23}
+//   cols 7,8,9 = "1.1 ou 2.1 (pts)", "1.2 ou 2.2 (pts)", "2.3 (pts)"
+function salvarPontuacaoCap(params) {
+  try {
+    var sh = _ss_().getSheetByName('📊 Capacidade');
+    if (!sh) throw new Error('Aba Capacidade não encontrada.');
+    sh.getRange(params.linha, 7).setValue(params.pts11 || 0);
+    sh.getRange(params.linha, 8).setValue(params.pts12 || 0);
+    sh.getRange(params.linha, 9).setValue(params.pts23 || 0);
+    return { ok: true };
+  } catch(e) { return { ok: false, erro: e.message }; }
+}
+
+// ── getEmails ─────────────────────────────────────────────────────────────
+// ── getServidoresApp ──────────────────────────────────────────────────────────
+// Retorna a lista de servidores do setor como array de objetos:
+//   [{nome, cor, isChefe, email}]
+// Lê de PropertiesService (chave SEL_SERVIDORES_JSON). Se não existir, usa padrão.
+function getServidoresApp() {
+  var props = PropertiesService.getScriptProperties();
+  var raw   = props.getProperty('SEL_SERVIDORES_JSON');
+  var lista;
+  if (raw) {
+    try { lista = JSON.parse(raw); } catch(e) { lista = null; }
+  }
+  if (!lista || !lista.length) {
+    lista = _lerServidoresConfigSheet_();
+  }
+  if (!lista || !lista.length) {
+    // Lista padrão inicial
+    lista = [
+      { nome:'Amanda',  cor:'#2563eb', isChefe:true  },
+      { nome:'Beatriz', cor:'#db2777', isChefe:false },
+      { nome:'Bruno',   cor:'#7c3aed', isChefe:false },
+      { nome:'Samuel',  cor:'#d97706', isChefe:true  }
+    ];
+  }
+  // Enriquece com email de PropertiesService ou EMAILS_SEL
+  lista.forEach(function(s) {
+    s.email = props.getProperty('email_' + s.nome) || EMAILS_SEL[s.nome] || '';
+  });
+  return lista;
+}
+
+// ── salvarServidoresApp ───────────────────────────────────────────────────────
+// Persiste a lista completa de servidores no PropertiesService.
+// lista: [{nome, cor, isChefe}] — e-mails são mantidos separadamente.
+function salvarServidoresApp(lista) {
+  try {
+    if (!Array.isArray(lista)) throw new Error('Lista inválida.');
+    var props = PropertiesService.getScriptProperties();
+    var antiga = getServidoresApp().map(function(s) {
+      return { nome: String(s.nome || '').trim(), cor: s.cor, isChefe: !!s.isChefe };
+    });
+    lista.forEach(function(s) {
+      if (!s.nome || !s.nome.trim()) throw new Error('Nome em branco.');
+    });
+    var limpa = lista.map(function(s) {
+      return { nome: s.nome.trim(), cor: s.cor || '#64748b', isChefe: !!s.isChefe };
+    });
+
+    var vistos = {};
+    limpa.forEach(function(s) {
+      var k = _normServidorNome_(s.nome);
+      if (vistos[k]) throw new Error('Servidor duplicado: ' + s.nome + '.');
+      vistos[k] = true;
+    });
+
+    var novos = {};
+    limpa.forEach(function(s) { novos[_normServidorNome_(s.nome)] = true; });
+
+    var renomes = [];
+    var antigosRenomeados = {};
+    for (var i = 0; i < Math.min(antiga.length, limpa.length); i++) {
+      var oldN = _normServidorNome_(antiga[i].nome);
+      var newN = _normServidorNome_(limpa[i].nome);
+      if (oldN && newN && oldN !== newN && !novos[oldN]) {
+        renomes.push({ antigo: antiga[i].nome, novo: limpa[i].nome });
+        antigosRenomeados[oldN] = true;
+      }
+    }
+
+    var bloqueados = [];
+    antiga.forEach(function(s) {
+      var k = _normServidorNome_(s.nome);
+      if (!k || novos[k] || antigosRenomeados[k]) return;
+      var vinc = _servidorTemVinculosAtivos_(s.nome);
+      if (vinc.tem) bloqueados.push(s.nome + ' (' + vinc.total + ' vínculo(s) ativo(s))');
+    });
+    if (bloqueados.length) {
+      throw new Error('Não removi servidor com processo ativo: ' + bloqueados.join(', ') + '. Reatribua os processos antes de remover.');
+    }
+
+    props.setProperty('SEL_SERVIDORES_JSON', JSON.stringify(limpa));
+    _salvarServidoresConfigSheet_(limpa);
+
+    var alterados = 0;
+    renomes.forEach(function(rn) {
+      var oldEmailKey = 'email_' + rn.antigo;
+      var newEmailKey = 'email_' + rn.novo;
+      var oldEmail = props.getProperty(oldEmailKey);
+      if (oldEmail && !props.getProperty(newEmailKey)) props.setProperty(newEmailKey, oldEmail);
+      alterados += _renomearServidorNasAbas_(rn.antigo, rn.novo);
+    });
+    if (renomes.length) _sincronizarCapacidadeComEtapas_();
+
+    return { ok: true, renomes: renomes.length, alterados: alterados };
+  } catch(e) { return { ok: false, erro: e.message }; }
+}
+
+// Retorna {Amanda: email, Beatriz: email, ...} do PropertiesService.
+// Usa lista dinâmica de servidores.
+function getEmails() {
+  var lista = getServidoresApp();
+  var props = PropertiesService.getScriptProperties();
+  var emails = {};
+  lista.forEach(function(s) {
+    emails[s.nome] = props.getProperty('email_' + s.nome) || EMAILS_SEL[s.nome] || '';
+  });
+  return emails;
+}
+
+// ── salvarEmail ───────────────────────────────────────────────────────────
+// Salva/atualiza o e-mail de um servidor no PropertiesService.
+function salvarEmail(servidor, email) {
+  try {
+    if (!servidor) throw new Error('Servidor não informado.');
+    if (email && email.indexOf('@') < 0) throw new Error('E-mail inválido.');
+    PropertiesService.getScriptProperties().setProperty('email_' + servidor, email);
+    _salvarServidoresConfigSheet_(getServidoresApp());
+    return { ok: true };
+  } catch(e) { return { ok: false, erro: e.message }; }
+}
+
+// ── instalarTriggerAvisos ─────────────────────────────────────────────────
+// Chamada pelo botão "Instalar trigger" no app.
+// Remove trigger anterior (se existir) e instala novo às 10h30 diariamente.
+function instalarTriggerAvisos() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'enviarAvisosPrazo') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('enviarAvisosPrazo').timeBased().everyDays(1).atHour(AVISO_HORA).nearMinute(AVISO_MINUTO).create();
+  PropertiesService.getScriptProperties().setProperties({
+    SEL_TRIGGER_AVISOS_INSTALADO_EM: new Date().toISOString(),
+    SEL_TRIGGER_AVISOS_HORA: AVISO_HORA_LABEL,
+    SEL_TRIGGER_AVISOS_TZ: Session.getScriptTimeZone()
+  });
+  return 'Trigger instalado. Avisos serão enviados todos os dias por volta das ' + AVISO_HORA_LABEL + '.';
+}
+
+// ── verificarTriggerAvisos ────────────────────────────────────────────────
+// Informa se o trigger diário de avisos está instalado.
+function verificarTriggerAvisos() {
+  try {
+    var triggers = ScriptApp.getProjectTriggers();
+    var props = PropertiesService.getScriptProperties();
+    for (var i = 0; i < triggers.length; i++) {
+      if (triggers[i].getHandlerFunction() === 'enviarAvisosPrazo') {
+        return {
+          instalado: true,
+          hora: props.getProperty('SEL_TRIGGER_AVISOS_HORA') || AVISO_HORA_LABEL,
+          timezone: props.getProperty('SEL_TRIGGER_AVISOS_TZ') || Session.getScriptTimeZone(),
+          instaladoEm: props.getProperty('SEL_TRIGGER_AVISOS_INSTALADO_EM') || ''
+        };
+      }
+    }
+    return { instalado: false, timezone: Session.getScriptTimeZone() };
+  } catch(e) { return { instalado: false, erro: e.message }; }
+}
+
+// Envia um e-mail simples para validar permissões e configuração do MailApp.
+function enviarEmailTesteServidor(servidor) {
+  try {
+    servidor = String(servidor || '').trim();
+    if (!servidor) throw new Error('Servidor não informado.');
+    var emails = getEmails();
+    var dest = emails[servidor] || EMAILS_SEL[servidor] || '';
+    if (!dest || dest.indexOf('@') < 0 || dest.indexOf('COLE_') === 0) {
+      throw new Error('E-mail de ' + servidor + ' não está cadastrado na Config.');
+    }
+    var tz = Session.getScriptTimeZone();
+    var agora = Utilities.formatDate(new Date(), tz, 'dd/MM/yyyy HH:mm');
+    var html = '<div style="font-family:Arial,sans-serif;max-width:560px;color:#1e293b;">'
+      + '<div style="background:#1a3a5c;color:#fff;padding:14px 18px;border-radius:8px 8px 0 0;">'
+      + '<h2 style="margin:0;font-size:16px;">Teste de e-mail - SEL/CPII</h2>'
+      + '<p style="margin:3px 0 0;font-size:12px;opacity:.85;">Envio automático de avisos de prazo</p>'
+      + '</div>'
+      + '<div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;padding:16px;">'
+      + 'Olá, <b>' + servidor + '</b>.<br><br>'
+      + 'Este é um teste para confirmar que o Apps Script consegue enviar e-mail pela configuração atual.'
+      + '<br><br><span style="color:#64748b;font-size:12px;">Horário do projeto: ' + agora + ' (' + tz + ').</span>'
+      + '</div></div>';
+    MailApp.sendEmail(dest, 'Teste de e-mail - App Gestão de Etapas SEL', '', { htmlBody: html });
+    return { ok: true, email: dest };
+  } catch(e) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ── atribuirResponsaveisApp ───────────────────────────────────────────────
+// Atribui até 2 responsáveis a um processo (fase interna + fase externa).
+// Atualiza coluna "Agente Responsável" na aba Etapas e coluna Servidor na Capacidade.
+// params: {pid, servInt, servExt, modal}
+// Retorna: {ok, avisos: [{fase, msg}]}
+function atribuirResponsaveisApp(params) {
+  try {
+    var ss     = _ss_();
+    var pid    = params.pid    || '';
+    var servInt = params.servInt || '';
+    var servExt = params.servExt || '';
+    var mNorm  = (params.modal || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+    var ehPE   = mNorm.indexOf('pregao') >= 0 || mNorm.indexOf('concorr') >= 0;
+    var avisos = [];
+    if (ehPE && servInt && servExt && servInt === servExt) {
+      throw new Error('Fase interna e fase externa precisam ter responsáveis diferentes em Pregão/Concorrência.');
+    }
+
+    // ── 1. Capacidade ─────────────────────────────────────────────
+    var shCap = ss.getSheetByName('📊 Capacidade');
+    if (shCap) {
+      var capData = shCap.getRange(1, 1, shCap.getLastRow(), shCap.getLastColumn()).getValues();
+      var regHdr = -1;
+      for (var ci = 0; ci < capData.length; ci++) {
+        var cr = capData[ci].map(function(c){ return String(c).trim(); });
+        if (cr[0].indexOf('Servidor') >= 0 && cr[2] === 'ProcessoID') { regHdr = ci; break; }
+      }
+      var foundInt = false, foundExt = false;
+      if (regHdr >= 0) {
+        for (var r = regHdr + 1; r < capData.length; r++) {
+          var cpid  = String(capData[r][2]||'').trim();
+          if (cpid !== pid) continue;
+          var cfase = String(capData[r][5]||'').trim().toLowerCase();
+          if (cfase.indexOf('ext') >= 0) {
+            foundExt = true;
+            var ce = shCap.getRange(r + 1, 1);
+            var dve = ce.getDataValidation();
+            ce.clearDataValidations().setValue(ehPE ? servExt : (servExt || servInt || ''));
+            if (dve) ce.setDataValidation(dve);
+          } else {
+            foundInt = true;
+            var ci2 = shCap.getRange(r + 1, 1);
+            var dvi = ci2.getDataValidation();
+            ci2.clearDataValidations().setValue(servInt || '');
+            if (dvi) ci2.setDataValidation(dvi);
+          }
+        }
+      }
+      if (servInt && !foundInt)
+        avisos.push({ fase:'Interna', msg:'Processo não encontrado na Capacidade (fase interna). Vá à aba Capacidade e adicione a pontuação manualmente.' });
+      if (ehPE && servExt && !foundExt)
+        avisos.push({ fase:'Externa', msg:'Processo não encontrado na Capacidade (fase externa). Vá à aba Capacidade e adicione a pontuação manualmente.' });
+    }
+
+    // ── 2. Etapas — Agente Responsável ────────────────────────────
+    var shE = ss.getSheetByName(ABA_ETP);
+    if (shE) {
+      var lE   = _lerAba_(shE, 'ProcessoID');
+      var hdr  = lE.header;
+      var iPid = hdr.indexOf('ProcessoID');
+      var iAg  = hdr.indexOf('Agente Responsável');
+      var iFas = hdr.indexOf('Fase');
+      var iStat = hdr.indexOf('StatusEtapa ◄ EDITAR');
+      var faseAtual = '';
+      if (iAg >= 0) {
+        for (var j = lE.hIdx + 1; j < lE.values.length; j++) {
+          var epid  = String(lE.values[j][iPid]||'').trim();
+          if (epid !== pid) continue;
+          var efase = String(lE.values[j][iFas]||'').trim().toLowerCase();
+          var estat = iStat >= 0 ? _normStatus_(lE.values[j][iStat]) : 'pendente';
+          if (!faseAtual && estat !== 'ok' && estat !== 'na') faseAtual = efase;
+          var novoAg = efase.indexOf('ext') >= 0
+            ? (ehPE ? (servExt || '') : (servExt || servInt || ''))
+            : (servInt || '');
+          shE.getRange(j + 1, iAg + 1).setValue(novoAg);
+        }
+        if (faseAtual) _setCapacidadeAtivo_(pid, faseAtual, 'Sim');
+      }
+    }
+
+    _sincronizarCapacidadeComEtapas_();
+    return { ok: true, avisos: avisos };
+  } catch(e) { return { ok: false, erro: e.message }; }
+}

@@ -273,6 +273,11 @@ function getDados() {
       });
     });
 
+    var filaDisplayCursor = new Date();
+    filaDisplayCursor.setHours(0, 0, 0, 0);
+    filaDisplayCursor = new Date(filaDisplayCursor.getFullYear(), filaDisplayCursor.getMonth() + 1, 1);
+    while (!isDiaUtil(filaDisplayCursor)) filaDisplayCursor.setDate(filaDisplayCursor.getDate() + 1);
+
     // ── Processa cada processo ────────────────────────────────────────────
     var resultado = processos.map(function(p) {
       var pid      = String(p['ProcessoID']       || '').trim();
@@ -282,10 +287,11 @@ function getDados() {
       var linkSuap = String(p['Link SUAP']         || '#').trim();
       var temIRP   = String(p['Tem IRP?']          || 'Não').trim();
       var d0       = parseDateValue(d0raw);  // converte para objeto Date
-      // FIX: se D0 for inválida, pula o processo para evitar datas absurdas no Gantt
+      var d0Simulado = false;
+      // Processo sem D0 fica na fila: gera uma data futura apenas para exibição no Gantt.
       if (!d0) {
-        Logger.log('AVISO: Processo ' + pid + ' ignorado — D0 inválida ou vazia ("' + d0raw + '").');
-        return null;
+        d0 = new Date(filaDisplayCursor.getTime());
+        d0Simulado = true;
       }
       var etps     = etapasPorProc[pid] || [];
 
@@ -411,7 +417,8 @@ function getDados() {
       var temParalisado = etapasCalc.some(function(e){ return e.status === 'paralisado'; });
       var statusBase    = normalizeStatus(String(p['Status'] || '').trim());
       var statusGeral;
-      if (temAtrasada)                          statusGeral = 'atrasado';
+      if (d0Simulado)                           statusGeral = 'planejamento';
+      else if (temAtrasada)                     statusGeral = 'atrasado';
       else if (temAguardando)                   statusGeral = 'aguardando';
       else if (temParalisado)                   statusGeral = 'paralisado';
       else if (temAndamento)                    statusGeral = 'andamento';
@@ -430,6 +437,24 @@ function getDados() {
       // Para o "Período" do processo usamos fim_real_iso (data real com atraso),
       // não fim_iso (prazo puro) — queremos mostrar até quando o processo realmente durou.
       var procFimIso = etapasCalc.length ? etapasCalc[etapasCalc.length - 1].fim_real_iso : null;
+      if (d0Simulado && procFimIso) {
+        var FILA_VISUAL_DIAS = 150;
+        var fimVisual = adicionarDiasUteis(new Date(d0.getTime()), FILA_VISUAL_DIAS);
+        fim2 = dateToMonthIdx(fimVisual);
+        procFimIso = isoLocal_(fimVisual);
+        var nEtapasVis = etapasCalc.length || 1;
+        etapasCalc.forEach(function(et, idxEt) {
+          var iniVis = adicionarDiasUteis(new Date(d0.getTime()), Math.round((FILA_VISUAL_DIAS / nEtapasVis) * idxEt));
+          var fimVis = adicionarDiasUteis(new Date(d0.getTime()), Math.round((FILA_VISUAL_DIAS / nEtapasVis) * (idxEt + 1)));
+          et.prazo_ini = dateToMonthIdx(iniVis);
+          et.prazo_fim = dateToMonthIdx(fimVis);
+          et.real_ini = et.prazo_ini;
+          et.real_fim = et.prazo_fim;
+          et.ini_iso = isoLocal_(iniVis);
+          et.fim_iso = isoLocal_(fimVis);
+          et.fim_real_iso = et.fim_iso;
+        });
+      }
 
       return {
         id:         pid,
@@ -441,6 +466,7 @@ function getDados() {
         fim:        fim2,            // índice do mês de término (para posicionar no Gantt)
         ini_iso:    procIniIso,      // data de início exata (YYYY-MM-DD) — para o tooltip DD/MM – DD/MM
         fim_iso:    procFimIso,      // data de fim exata (YYYY-MM-DD) — para o tooltip DD/MM – DD/MM
+        d0_simulado: d0Simulado,     // true quando a data foi criada apenas para exibição da fila
         execucao:   execucao,        // percentual de conclusão (0 a 100)
         previsao:   absToLabel(fim2),// texto legível do mês de término (ex: "Ago/2026")
         suap:       linkSuap || '#', // URL do processo no SUAP
@@ -530,6 +556,12 @@ function absToLabel(idx) {
   return MOS[((idx % 12) + 12) % 12] + '/' + y;
 }
 
+function isoLocal_(d) {
+  return d.getFullYear() + '-' +
+    String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0');
+}
+
 // Converte os valores da coluna "StatusEtapa ◄ EDITAR" da planilha
 // para chaves internas usadas no código JavaScript do painel.
 // Isso permite que a equipe use linguagem natural na planilha
@@ -544,24 +576,29 @@ function absToLabel(idx) {
 //   "Paralisado"            → 'paralisado'  (interrupção por fato extraordinário; retomada sem prazo)
 function normalizeStatus(s) {
   if (!s) return 'planejamento';
-  var lower = s.toLowerCase().trim();
+  var lower = String(s).toLowerCase().trim()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
   var map = {
     'em andamento':              'andamento',
-    'concluída':                 'ok',
     'concluida':                 'ok',
     // 'no prazo' era sinônimo antigo de 'concluída' — removido para evitar
     // contradição visual quando AtrasoRealDias > 0. Se a etapa tem atraso
     // mas ainda está acontecendo, o status correto é 'Em andamento'.
-    'não iniciada':              'planejamento',
     'nao iniciada':              'planejamento',
-    'não se aplica':             'naoaplica',
     'nao se aplica':             'naoaplica',
     'planejamento':              'planejamento',
     'em planejamento':           'planejamento',
     'pendente':                  'pendente',
     'aguardando requisitante':   'aguardando',
-    'paralisado':                'paralisado'
+    'paralisado':                'paralisado',
+    'suspenso':                  'paralisado',
+    'atrasado':                  'atrasado'
   };
+  if (lower.indexOf('conclu') >= 0) return 'ok';
+  if (lower.indexOf('andament') >= 0) return 'andamento';
+  if (lower.indexOf('aguard') >= 0) return 'aguardando';
+  if (lower.indexOf('paralis') >= 0 || lower.indexOf('suspens') >= 0) return 'paralisado';
+  if (lower.indexOf('atras') >= 0) return 'atrasado';
   return map[lower] || 'planejamento';
 }
 
@@ -1023,8 +1060,59 @@ function capNorm_(s) {
     .replace(/[^A-Z0-9]/g, '');
 }
 
+function capGetServidoresConfig_() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sh = ss.getSheetByName('⚙️ ConfigSEL') || ss.getSheetByName('ConfigSEL');
+    if (!sh || sh.getLastRow() < 2) return [];
+    var vals = sh.getRange(1, 1, sh.getLastRow(), Math.max(sh.getLastColumn(), 4)).getValues();
+    var h = vals[0].map(function(c){ return String(c || '').trim(); });
+    var iNome = h.indexOf('Nome');
+    if (iNome < 0) return [];
+    var out = [];
+    for (var r = 1; r < vals.length; r++) {
+      var nome = String(vals[r][iNome] || '').trim();
+      if (nome) out.push(nome);
+    }
+    return out;
+  } catch(e) {
+    return [];
+  }
+}
+
+function capGetServidoresAtivos_() {
+  try {
+    var cfg = capGetServidoresConfig_();
+    if (cfg.length) return cfg.map(function(n){ return capNorm_(n); });
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var ws = capFindSheet_(ss, 'Capacidade');
+    if (!ws) return CAP_SERVIDORES_ATIVOS.slice();
+    var data = ws.getDataRange().getValues();
+    var sumHdr = -1, regHdr = -1;
+    for (var r = 0; r < data.length; r++) {
+      var a = String(data[r][0] || '').trim();
+      var b = String(data[r][1] || '').trim();
+      var c = String(data[r][2] || '').trim();
+      if (sumHdr < 0 && a === 'Servidor' && b.indexOf('Outros') >= 0) sumHdr = r;
+      if (regHdr < 0 && a.indexOf('Servidor') >= 0 && c === 'ProcessoID') regHdr = r;
+      if (sumHdr >= 0 && regHdr >= 0) break;
+    }
+    if (sumHdr < 0) return CAP_SERVIDORES_ATIVOS.slice();
+    var limite = regHdr > sumHdr ? regHdr : data.length;
+    var out = [];
+    for (var i = sumHdr + 1; i < limite; i++) {
+      var nome = String(data[i][0] || '').trim();
+      if (!nome || /total/i.test(nome)) continue;
+      out.push(capNorm_(nome));
+    }
+    return out.length ? out : CAP_SERVIDORES_ATIVOS.slice();
+  } catch(e) {
+    return CAP_SERVIDORES_ATIVOS.slice();
+  }
+}
+
 function capIsServidorAtivo_(nome) {
-  return CAP_SERVIDORES_ATIVOS.indexOf(capNorm_(nome)) >= 0;
+  return capGetServidoresAtivos_().indexOf(capNorm_(nome)) >= 0;
 }
 
 function capColLetter_(n) {
@@ -1138,7 +1226,7 @@ function capEnsureColumns_(ws) {
 }
 
 function capAtualizarFormulasResumo_(wsCap, info) {
-  if (info.colServidor < 0 || info.colTotal < 0 || info.colAtivo < 0) {
+  if (info.colServidor < 0 || info.colTotal < 0 || info.colAtivo < 0 || info.colFase < 0) {
     return false;
   }
   var maxRows = wsCap.getMaxRows();
@@ -1148,11 +1236,36 @@ function capAtualizarFormulasResumo_(wsCap, info) {
   var servidorRange = sheetName + '!' + capColLetter_(info.colServidor + 1) + start + ':' + capColLetter_(info.colServidor + 1) + end;
   var totalRange = sheetName + '!' + capColLetter_(info.colTotal + 1) + start + ':' + capColLetter_(info.colTotal + 1) + end;
   var ativoRange = sheetName + '!' + capColLetter_(info.colAtivo + 1) + start + ':' + capColLetter_(info.colAtivo + 1) + end;
+  var faseRange = sheetName + '!' + capColLetter_(info.colFase + 1) + start + ':' + capColLetter_(info.colFase + 1) + end;
 
-  // Linhas 5–8 = resumo por servidor (AMANDA, BEATRIZ, BRUNO, SAMUEL)
-  // col B = Outros (fixo), col C = Processos (soma via SUMIFS), col D = Total (=B+C)
-  for (var r = 5; r <= 8; r++) {
-    wsCap.getRange(r, 3).setFormula('=SUMIFS(' + totalRange + ',' + servidorRange + ',$A' + r + ',' + ativoRange + ',"Sim")');
+  var resumoRows = [];
+  var preHeaderRows = Math.max(info.headerRow - 1, 1);
+  var pre = wsCap.getRange(1, 1, preHeaderRows, Math.min(wsCap.getLastColumn(), 2)).getValues();
+  var sumHdr = -1;
+  for (var sr = 0; sr < pre.length; sr++) {
+    if (String(pre[sr][0] || '').trim() === 'Servidor' &&
+        String(pre[sr][1] || '').trim().indexOf('Outros') >= 0) {
+      sumHdr = sr + 1;
+      break;
+    }
+  }
+  if (sumHdr > 0) {
+    for (var rr = sumHdr + 1; rr < info.headerRow; rr++) {
+      var nome = String(wsCap.getRange(rr, 1).getValue() || '').trim();
+      if (!nome || /total/i.test(nome)) continue;
+      resumoRows.push(rr);
+    }
+  }
+
+  // O painel publico mostra a capilaridade da fase interna; a fase externa
+  // fica como controle operacional separado na propria planilha.
+  resumoRows.forEach(function(r) {
+    wsCap.getRange(r, 3).setFormula('=SUMIFS(' + totalRange + ',' + servidorRange + ',$A' + r + ',' + ativoRange + ',"Sim",' + faseRange + ',"Fase Interna")');
+  });
+  if (!resumoRows.length) {
+    for (var r = 5; r <= 8; r++) {
+      wsCap.getRange(r, 3).setFormula('=SUMIFS(' + totalRange + ',' + servidorRange + ',$A' + r + ',' + ativoRange + ',"Sim",' + faseRange + ',"Fase Interna")');
+    }
   }
   return true;
 }
@@ -2368,24 +2481,101 @@ function getCapacidade() {
     // Lê o bloco de dados relevante de uma só vez (linhas 1-30 devem cobrir tudo)
     var dados = wsCap.getDataRange().getValues();
 
-    // Linha 9  = índice 8 (0-based) → totais do setor (TOTAL DO SETOR)
-    // Linha 11 = índice 10 (0-based) → status de capacidade (Ocupação do Setor)
-    // Garante que o array tem linhas suficientes
+    // Mantem compatibilidade com o bloco antigo, mas calcula dinamicamente
+    // quando a equipe tiver mais/menos servidores.
     if (dados.length < 11) {
       return { ok: false, erro: 'Aba Capacidade incompleta — esperadas ao menos 11 linhas.' };
     }
 
-    var rowTotais   = dados[8];   // linha 9 (0-based = 8)
-    var rowStatus   = dados[10];  // linha 11 (0-based = 10)
+    var rowTotais   = dados[8];   // fallback antigo: linha 9
+    var rowStatus   = dados[10];  // fallback antigo: linha 11
 
-    // Extrai valores calculados pelas fórmulas da planilha
-    // col D (índice 3) = total de pontos; col E (índice 4) = teto
-    var totalPts = Number(rowTotais[3]) || 0;
-    var tetoPts  = Number(rowTotais[4]) || 32;  // fallback 32 (4 serv × 8)
+    function parseNumCap_(v) {
+      if (typeof v === 'number') return v;
+      return parseFloat(String(v || '0').replace(',', '.')) || 0;
+    }
+    function isSimCap_(v) {
+      var n = String(v || '').trim().toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      return v === true || n === 'sim' || n === 's' || n === 'true' || n === '1';
+    }
+    function parsePctDecimalCap_(v) {
+      if (typeof v === 'number') return v > 1 ? v / 100 : v;
+      var txt = String(v || '').trim();
+      if (!txt) return NaN;
+      var n = parseFloat(txt.replace('%', '').replace(',', '.'));
+      if (isNaN(n)) return NaN;
+      return n > 1 ? n / 100 : n;
+    }
+
+    var sumHdr = -1, regHdr = -1;
+    for (var rr = 0; rr < dados.length; rr++) {
+      var ca = String(dados[rr][0] || '').trim();
+      var cb = String(dados[rr][1] || '').trim();
+      var cc = String(dados[rr][2] || '').trim();
+      if (sumHdr < 0 && ca === 'Servidor' && cb.indexOf('Outros') >= 0) sumHdr = rr;
+      if (regHdr < 0 && ca.indexOf('Servidor') >= 0 && cc === 'ProcessoID') regHdr = rr;
+      if (sumHdr >= 0 && regHdr >= 0) break;
+    }
+
+    var servidoresConfig = capGetServidoresConfig_();
+    var usandoConfigServidores = servidoresConfig.length > 0;
+    var servidoresResumo = {};
+    servidoresConfig.forEach(function(nomeCfg) {
+      servidoresResumo[capNorm_(nomeCfg)] = true;
+    });
+    var outrosPts = 0;
+    if (sumHdr >= 0) {
+      var limite = regHdr > sumHdr ? regHdr : dados.length;
+      for (var sr = sumHdr + 1; sr < limite; sr++) {
+        var nomeResumo = String(dados[sr][0] || '').trim();
+        if (/total/i.test(nomeResumo)) {
+          rowTotais = dados[sr];
+          continue;
+        }
+        if (/ocupacao|ocupação/i.test(nomeResumo)) {
+          rowStatus = dados[sr];
+          continue;
+        }
+        if (!nomeResumo || /total/i.test(nomeResumo)) continue;
+        var keyResumo = capNorm_(nomeResumo);
+        if (!usandoConfigServidores) servidoresResumo[keyResumo] = true;
+        if (!usandoConfigServidores || servidoresResumo[keyResumo]) {
+          outrosPts += parseNumCap_(dados[sr][1]);
+        }
+      }
+    }
+
+    var processosPts = 0;
+    var usarServidoresDoRegistro = Object.keys(servidoresResumo).length === 0;
+    if (regHdr >= 0) {
+      var hCap = dados[regHdr].map(function(h){ return String(h || '').trim(); });
+      var iServ = hCap.indexOf('Servidor');
+      var iAtivo = hCap.indexOf('Ativo');
+      var iFase = hCap.indexOf('Fase da Carga');
+      var iTotal = hCap.indexOf('Total');
+      for (var pr = regHdr + 1; pr < dados.length; pr++) {
+        var rowCap = dados[pr];
+        var servCap = iServ >= 0 ? String(rowCap[iServ] || '').trim() : String(rowCap[0] || '').trim();
+        if (!servCap) continue;
+        if (iAtivo >= 0 && !isSimCap_(rowCap[iAtivo])) continue;
+        var faseCap = iFase >= 0 ? String(rowCap[iFase] || '').toLowerCase() : '';
+        if (faseCap.indexOf('ext') >= 0) continue;
+        processosPts += iTotal >= 0 ? parseNumCap_(rowCap[iTotal]) : 0;
+        if (usarServidoresDoRegistro) servidoresResumo[capNorm_(servCap)] = true;
+      }
+    }
+
+    var qtdServidores = Object.keys(servidoresResumo).length;
+    var totalCalc = processosPts + outrosPts;
+    var totalOficial = parseNumCap_(rowTotais[3]);
+    var tetoOficial = parseNumCap_(rowTotais[4]);
+    var totalPts = totalOficial > 0 ? totalOficial : totalCalc;
+    var tetoPts  = tetoOficial > 0 ? tetoOficial : (qtdServidores ? qtdServidores * 10 : 40);
     var pct      = tetoPts > 0 ? totalPts / tetoPts : 0;
 
-    // col B (índice 1) pode ter o % já calculado pela planilha; usa como cross-check
-    var pctPlanilha = Number(rowStatus[1]);
+    // O percentual oficial da planilha prevalece quando existir.
+    var pctPlanilha = parsePctDecimalCap_(rowStatus[1]);
     if (!isNaN(pctPlanilha) && pctPlanilha > 0) pct = pctPlanilha;
 
     // col C (índice 2) = nível textual
@@ -2410,7 +2600,7 @@ function getCapacidade() {
 
     var retorno = {
       ok:       true,
-      pct:      Math.round(pct * 100),
+      pct:      Math.round(pct * 100 + 1e-9),  // +epsilon evita arredondamento incorreto por ponto flutuante (ex: 1.025*100 = 102.499... em IEEE 754)
       nivel:    nivel,
       mensagem: mensagem,
       totalPts: totalPts,
