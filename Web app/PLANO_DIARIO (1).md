@@ -352,3 +352,75 @@ Diagnóstico inicial substituído pela correção final abaixo: a Capacidade ago
 9. Lista de servidores passa a ser salva também na aba oculta `ConfigSEL`, para o painel público conseguir calcular capacidade com equipe dinâmica ao copiar/adaptar o projeto para outro campus.
 10. Painel público deixou de depender exclusivamente das linhas fixas AMANDA/BEATRIZ/BRUNO/SAMUEL para capacidade; agora lê `ConfigSEL` ou, em fallback, o resumo/registro da aba Capacidade.
 11. Correção: o KPI público de Capacidade voltou a respeitar o percentual oficial calculado na aba Capacidade (`Ocupação interna`), usando recálculo apenas como fallback quando a planilha não trouxer o valor.
+
+---
+
+## 🔍 SESSÃO 31/05/2026 (tarde) — Auditoria de comunicação AppSEL ↔ Planilha ↔ Painel
+
+**Pedido do Samuel:** verificar se o AppSEL conversa bem com a planilha do Google e se o Painel lê/exibe corretamente; corrigir inconsistências.
+
+**Verificação de comunicação — RESULTADO: comunicação OK.**
+- Ambos os apps apontam para a mesma planilha (SS_ID `1pXdDhz...`). AppSEL usa `openById(SS_ID)`; Painel usa `getActiveSpreadsheet()` (script vinculado). Coerente.
+- Nomes de abas batem: `🏛 Processos`, `🗓 Etapas`, `📊 Capacidade`. Detecção por regex `/processo/i` e `/etapa/i` — só a aba certa casa hoje.
+- Cabeçalhos lidos pelo código == cabeçalhos reais da planilha (ProcessoID, N° SUAP, Objeto, Modalidade, D0, Tem IRP?, Prazo (dias), `DataRealizacao◄ EDITAR` sem espaço, `StatusEtapa ◄ EDITAR`, `MotivoAtraso ◄ EDITAR`). ✅
+- Aba Capacidade: registro com cabeçalho na L15 (`Servidor ◄`/`ProcessoID`/`Ativo`), dados da L17. SUMIFS filtra `D="Sim"` + `F` (Fase Interna/Externa) somando coluna J (Total). Código localiza o registro por `Servidor`+`ProcessoID`. ✅
+
+**🐛 CORRIGIDO (código) — `AppsScript_Codigo_v3.gs` tinha 746 bytes NUL (`\x00`) no final do arquivo** (corrupção de gravação). O JS terminava certo em `getCapacidade()`, mas o lixo binário quebraria a colagem no editor / `node --check`. NULs removidos; arquivo revalidado (`node --check` ✅). Arquivo limpo salvo na pasta. AppSEL_Codigo.gs e os dois index.html: sem NULs.
+
+**⚠️ Inconsistências de DADOS na planilha (Samuel ajusta manualmente — NÃO é código):**
+1. **Etapa órfã duplicada — SEL-2026-003, linha 19 da aba Etapas:** "Envio ao SEL/SEPMA" ord 6 com status "Em andamento", fora de posição (a correta é a L28, "Não iniciada"). Apagar a **linha 19**. É a única duplicata (mesmo ProcessoID+Ord.) da planilha.
+2. **DataRealizacao anterior ao D0** (atraso fica negativo → não exibe): SEL-2026-004 etapa 1 (DR 02/03/2026 < D0 01/04/2026) e SEL-2026-011 etapa 1 (DR 31/10/2025 < D0 15/02/2026). Corrigir as datas reais.
+3. **11 etapas "Concluída" sem DataRealizacao** → tooltip não mostra "Realizado em". Preencher as datas.
+4. **Coluna `Ativo` da Capacidade com `Nao` (sem til):** funciona no SUMIFS (critério é `"Sim"`), mas padronizar para `Não`/`Sim` evita confusão visual.
+
+**Obs.:** col 11 (K) da aba Etapas (linhas 3–8) contém só a legenda do dropdown de validação — texto de referência, não dado; o código lê a col 9. Inofensivo.
+
+**Verificação final:** `node --check` ✅ nos dois `.gs` após limpeza. Estrutura da planilha 100% compatível com a leitura dos dois apps.
+
+---
+
+## 🔒 SESSÃO 31/05/2026 (noite) — Travas de integridade no AppSEL (concluirEtapa)
+
+**Contexto:** planilha é backend (servidores não editam direto). Em vez de corrigir célula a célula, prevenir na origem, no app que a equipe usa.
+
+**Implementado em `AppSEL_Codigo.gs` (aguarda republicação):**
+- Novo helper `_d0DoProcesso_(pid)` — lê a D0 do processo na aba Processos via `_parseDate_`.
+- **TRAVA 1 (em `concluirEtapa`):** bloqueia concluir sem `dataRealizacao` → retorna `{ok:false, erro:'Informe a data de conclusão...'}`. Garante que nenhuma etapa "Concluída" fique sem data (elimina na origem os casos de tooltip sem "Realizado em"). Também valida data inválida (`isNaN`).
+- **TRAVA 2 (em `concluirEtapa`):** bloqueia `dataRealizacao` anterior ao D0 do processo → retorna erro com as duas datas em DD/MM/AAAA. Elimina o atraso negativo que o painel não exibe.
+- Front (`AppSEL_index.html`) já trata `res.ok===false` exibindo `res.erro` em toast (linha ~1708/1727) — nenhuma alteração de HTML necessária.
+
+**🐛 Recuperação:** a cópia local de `AppSEL_Codigo.gs` estava TRUNCADA (parava na linha 2046, no meio de uma string em `regredirEtapa`/reabrir). Recuperada a versão íntegra do **git HEAD** (2341 linhas, `node --check` ✅) e as travas reaplicadas sobre ela. Arquivo final: 2380 linhas, sintaxe ✅. (Mesmo padrão de corrupção de gravação do `AppsScript_Codigo_v3.gs` desta data — vale conferir se o que está publicado no Apps Script está completo.)
+
+**Dados legados na planilha (10) — opcionais, some sozinho com o uso do app:** 2 DataRealizacao < D0 (SEL-2026-004 et.1, SEL-2026-011 et.1); 10 etapas "Concluída" sem data; 7 `Nao` sem til na col Ativo (cosmético, SUMIFS já funciona). Duplicatas e cascata de status: já corrigidas pelo Samuel. ✅
+
+**Publicação:** colar `AppSEL_Codigo.gs` atualizado no Apps Script → salvar → Implantar nova versão.
+
+---
+
+## ⚙️ SESSÃO 31/05/2026 (noite·2) — Visão de fila externa + validador + constantes
+
+**1) Fase externa "por vir" na aba Capacidade (AppSEL):**
+- Esclarecimento do Samuel: ao iniciar, o processo deve mostrar na Capacidade a linha INTERNA (ativa, com servidor) + a EXTERNA (não iniciada, com servidor); ao terminar a interna, os pontos do interno saem e some a linha interna; a externa ativa; ao concluir o processo, ambas somem. Essa lógica já existia (registrosInt/registrosExt + `_verificarTransicaoFase_` + `procConcluidoCap`).
+- **Bug corrigido em `getCapacidadeApp`:** o filtro `if (faseCorrenteCap[pid] && faseCorrenteCap[pid] !== faseKind) continue;` escondia a linha EXTERNA enquanto a fase corrente era interna — o gestor não via "o que vem". Trocado por `if (faseCorrenteCap[pid] === 'ext' && faseKind === 'int') continue;` — agora esconde só a INTERNA depois que a fase vira externa (interno já saiu); a EXTERNA por vir fica visível para planejar pontos.
+- Simulação com a planilha (10): SEL-001 mostra Int+Ext; SEL-013 (já externo) mostra só Ext; SEL-011 (concluído) some. ✅
+- Abordagem de "seção separada extPorVir" foi DESCARTADA (redundante com a lista de registros externos "Não iniciado" que já existe). Front voltou ao original.
+
+**2) `validarPlanilha()` no menu do Painel (`AppsScript_Codigo_v3.gs`):**
+- Novo item "🔎 Validar integridade da planilha" em onOpen. Função só-leitura que reporta num alert: etapas duplicadas (ProcessoID+Ord.), DataRealizacao < D0, "Concluída" sem data, status fora de cascata e células "Nao" sem acento na Capacidade. Helper `_dmy_`.
+
+**3) Prazos da Portaria 638/2026 → constantes (`AppsScript_Codigo_v3.gs`):**
+- Objeto `PORTARIA_638` no topo: `ETAPAS_INTERNAS` (5/45/10/15/10/10/3, referência dos blocos pré-formatados) e `FASE_EXTERNA` (DIRETA 30 / PREGAO 90 / CONCORRENCIA 100). `faseExternaDias()` agora lê dessas constantes.
+
+**Travas de integridade (concluirEtapa):** mantidas (sessão anterior desta data).
+**Validação:** `node --check` ✅ em AppSEL_Codigo.gs (2370 linhas) e AppsScript_Codigo_v3.gs; HTML sem resquícios, 2498 linhas.
+**Publicação:** republicar AppSEL_Codigo.gs (Web App) e AppsScript_Codigo_v3.gs (script vinculado → recarregar planilha p/ menu).
+
+---
+
+## 🏷️ SESSÃO 31/05/2026 (noite·3) — Histórico mostra NOME do processo (não o ID)
+
+**Pedido:** no histórico, o ProcessoID (SEL-2026-002) não faz sentido ao usuário. Exibir o nome do objeto com link SUAP clicável.
+- `getHistorico` (AppSEL_Codigo.gs): enriquece cada registro com `objeto` e `suap`, lidos da aba Processos (colunas Objeto / Link SUAP) por pid. `#` tratado como vazio.
+- `renderHistorico` (AppSEL_index.html): `.hist-proc` passa a exibir `h.objeto` (fallback pid); quando há SUAP, vira `<a target=_blank>` com seta ↗. ProcessoID não aparece mais.
+- **Truncamento recorrente:** Edit cortou AppSEL_Codigo.gs (→2371L) E AppSEL_index.html (cópia local já estava em 2498L vs git 2794L). Reconstruídos do git HEAD via Python + shutil.copyfile e revalidados. Cuidado ao escapar unicode em string JS dentro de Python (gerou `↗` literal; corrigido para ↗).
+- Final: AppSEL_Codigo.gs 2396L, AppSEL_index.html 2799L (termina em </html>), node --check ✅.

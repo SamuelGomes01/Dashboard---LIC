@@ -1749,9 +1749,14 @@ function renderHistorico() {
     + '📚 '+comMotivo.length+' registro'+(comMotivo.length>1?'s':'')+' no histórico</div>';
   comMotivo.forEach(function(h) {
     var ehRegressao = String(h.motivo || '').indexOf('REGRESSAO:') === 0;
+    // Exibe o NOME do processo (objeto) com link SUAP clicavel. ProcessoID nao e mostrado.
+    var nomeProc = h.objeto || h.pid;
+    var procHtml = (h.suap)
+      ? '<a href="'+esc(h.suap)+'" target="_blank" rel="noopener" style="color:var(--navy);text-decoration:none;">'+esc(nomeProc)+' ↗</a>'
+      : esc(nomeProc);
     html += '<div class="hist-card">'
       + '<span class="hist-dias">'+(ehRegressao ? 'Regressão' : '+'+h.dias+'d atraso')+'</span>'
-      + '<div class="hist-proc">'+esc(h.pid)+'</div>'
+      + '<div class="hist-proc">'+procHtml+'</div>'
       + '<div class="hist-etapa">Etapa: '+esc(h.etapa)+'</div>'
       + '<div class="hist-mot">"'+esc(h.motivo)+'"</div>'
       + '<div class="hist-foot">'

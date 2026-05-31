@@ -53,6 +53,33 @@ var CAP_DATA_START_ROW_FALLBACK = 16;
 
 
 // ════════════════════════════════════════════════════════════════════════
+// PRAZOS DA PORTARIA 638/2026 — fonte única de verdade
+//
+// Centraliza todos os prazos legais em um só lugar. Se a portaria for
+// revista, basta alterar os números aqui. ETAPAS_INTERNAS documenta os
+// prazos dos blocos pré-formatados da aba Etapas (referência/validação);
+// FASE_EXTERNA é usada diretamente por faseExternaDias().
+// ════════════════════════════════════════════════════════════════════════
+var PORTARIA_638 = {
+  // Fase interna (dias úteis) — ordem das etapas
+  ETAPAS_INTERNAS: {
+    'Designação da equipe':                 5,
+    'ETP + Mapa de Riscos + Pesquisa de Preços': 45,
+    'Minuta do Termo de Referência':        10,
+    'IRP — Intenção de Registro de Preços': 15,   // só quando Tem IRP? = Sim
+    'Adequações finais dos documentos':     10,
+    'Versão final do TR e demais documentos': 10,
+    'Envio ao SEL/SEPMA':                    3
+  },
+  // Fase externa (dias úteis) por modalidade
+  FASE_EXTERNA: {
+    DIRETA:       30,   // Contratação Direta / Dispensa / Inexigibilidade
+    PREGAO:       90,   // Pregão Eletrônico
+    CONCORRENCIA: 100   // Concorrência
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════
 // MENU CUSTOMIZADO — aparece na barra da planilha ao abrir
 //
 // A função onOpen() é executada automaticamente toda vez que alguém abre
@@ -70,6 +97,8 @@ function onOpen() {
       .addItem('Sincronizar capacidade', 'sincronizarCapacidade')
       .addItem('Concluir processo', 'concluirProcesso'))
     .addSeparator()
+    .addItem('🔎 Validar integridade da planilha', 'validarPlanilha')
+    .addSeparator()
     .addSubMenu(ui.createMenu('🔔 Detector de Atraso')
       .addItem('Instalar (avisa ao preencher DataRealizacao)', 'instalarTriggerOnEdit')
       .addItem('Desinstalar', 'desinstalarTriggerOnEdit'))
@@ -78,6 +107,134 @@ function onOpen() {
   // Garante que a coluna DataRealizacao exiba datas no formato DD/MM/YYYY
   // a cada abertura da planilha — evita datas "invertidas" por localidade.
   try { formatarColunaDatas(); } catch(e) {}
+}
+
+
+// ════════════════════════════════════════════════════════════════════════
+// VALIDAR INTEGRIDADE — validarPlanilha()
+//
+// Varre as abas Processos / Etapas / Capacidade e lista, num único relatório,
+// os problemas de dados que o sistema não exibe bem:
+//   1. Etapas duplicadas (mesmo ProcessoID + mesma Ord.)
+//   2. DataRealizacao anterior à abertura (D0) do processo → atraso negativo
+//   3. Etapa "Concluída" sem DataRealizacao → painel não mostra "Realizado em"
+//   4. Status fora de cascata (etapa concluída/em andamento após não-iniciada)
+//   5. Coluna Ativo da Capacidade com "Nao"/"Sim" sem acento
+// Apenas LÊ a planilha; não altera nada.
+// ════════════════════════════════════════════════════════════════════════
+function validarPlanilha() {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var wsProc = null, wsEtap = null, wsCap = null;
+    ss.getSheets().forEach(function(s) {
+      var n = s.getName();
+      if (/processo/i.test(n)) wsProc = s;
+      if (/etapa/i.test(n))    wsEtap = s;
+      if (/capacidade/i.test(n)) wsCap = s;
+    });
+    if (!wsProc || !wsEtap) { ui.alert('Abas "Processos" ou "Etapas" não encontradas.'); return; }
+
+    // ── D0 por processo ──
+    var dProc = wsProc.getDataRange().getValues();
+    var hP = -1;
+    for (var i = 0; i < dProc.length; i++) { if (dProc[i].join('|').indexOf('ProcessoID') >= 0) { hP = i; break; } }
+    var colId = dProc[hP].indexOf('ProcessoID');
+    var colD0 = dProc[hP].indexOf('D0 (Data Abertura)');
+    var d0Map = {};
+    for (var p = hP + 1; p < dProc.length; p++) {
+      var pid = String(dProc[p][colId] || '').trim();
+      if (pid) d0Map[pid] = parseDateValue(dProc[p][colD0]);
+    }
+
+    // ── Etapas ──
+    var dEt = wsEtap.getDataRange().getValues();
+    var hE = -1;
+    for (var j = 0; j < dEt.length; j++) { if (dEt[j].join('|').indexOf('ProcessoID') >= 0) { hE = j; break; } }
+    var cPid = dEt[hE].indexOf('ProcessoID');
+    var cOrd = dEt[hE].indexOf('Ord.');
+    var cEt  = dEt[hE].indexOf('Etapa');
+    var cDR  = dEt[hE].indexOf('DataRealizacao◄ EDITAR');
+    var cSt  = dEt[hE].indexOf('StatusEtapa ◄ EDITAR');
+
+    var dups = [], drAntes = [], conclSemData = [], foraCascata = [];
+    var vistos = {};       // pid+ord → primeira linha
+    var porProc = {};      // pid → [{linha, ord, status}]
+    for (var r = hE + 1; r < dEt.length; r++) {
+      var row = dEt[r];
+      var pid2 = String(row[cPid] || '').trim();
+      if (!pid2 || pid2.indexOf('SEL') !== 0) continue;
+      var ord = row[cOrd];
+      if (ord === '' || ord === null) continue;
+      var linha = r + 1;
+      var st = normalizeStatus(String(row[cSt] || '').trim());
+      var dr = cDR >= 0 ? parseDateValue(row[cDR]) : null;
+
+      var chave = pid2 + '#' + ord;
+      if (vistos[chave]) dups.push(pid2 + ' ord ' + ord + ' (linhas ' + vistos[chave] + ' e ' + linha + ')');
+      else vistos[chave] = linha;
+
+      var d0 = d0Map[pid2];
+      if (dr && d0 && dr < d0) drAntes.push(pid2 + ' L' + linha + ' (' + _dmy_(dr) + ' < D0 ' + _dmy_(d0) + ')');
+      if (st === 'ok' && !dr) conclSemData.push(pid2 + ' L' + linha + ' — ' + String(row[cEt] || '').substring(0, 28));
+
+      if (!porProc[pid2]) porProc[pid2] = [];
+      porProc[pid2].push({ linha: linha, ord: Number(ord) || 0, status: st });
+    }
+
+    // Status fora de cascata: etapa ok/andamento depois de uma não-iniciada
+    Object.keys(porProc).forEach(function(pid3) {
+      var es = porProc[pid3].sort(function(a, b) { return a.ord - b.ord; });
+      var viuNaoIni = false;
+      es.forEach(function(e) {
+        if (e.status === 'pendente') viuNaoIni = true;
+        else if ((e.status === 'ok' || e.status === 'andamento') && viuNaoIni) {
+          foraCascata.push(pid3 + ' L' + e.linha + ' ord ' + e.ord + ' (' + e.status + ' após etapa não iniciada)');
+        }
+      });
+    });
+
+    // ── Capacidade: Ativo sem acento ──
+    var ativoSemAcento = 0;
+    if (wsCap) {
+      var dC = wsCap.getDataRange().getValues();
+      for (var c = 0; c < dC.length; c++) {
+        for (var k = 0; k < dC[c].length; k++) {
+          var v = String(dC[c][k] || '').trim();
+          if (v === 'Nao') ativoSemAcento++;
+        }
+      }
+    }
+
+    // ── Monta relatório ──
+    function bloco(titulo, arr) {
+      if (!arr.length) return '✅ ' + titulo + ': nenhum\n';
+      return '⚠️ ' + titulo + ' (' + arr.length + '):\n   • ' + arr.slice(0, 12).join('\n   • ') +
+             (arr.length > 12 ? '\n   • … +' + (arr.length - 12) + ' outros' : '') + '\n';
+    }
+    var msg = '🔎 VALIDAÇÃO DE INTEGRIDADE\n\n'
+      + bloco('Etapas duplicadas (ProcessoID + Ord.)', dups) + '\n'
+      + bloco('DataRealizacao anterior ao D0', drAntes) + '\n'
+      + bloco('Etapas "Concluída" sem DataRealizacao', conclSemData) + '\n'
+      + bloco('Status fora de cascata', foraCascata) + '\n'
+      + (ativoSemAcento ? '⚠️ Capacidade: ' + ativoSemAcento + ' célula(s) com "Nao" sem acento (cosmético).\n'
+                        : '✅ Capacidade: coluna Ativo sem inconsistência de acento.\n');
+
+    var totalProblemas = dups.length + drAntes.length + conclSemData.length + foraCascata.length + ativoSemAcento;
+    msg += '\n' + (totalProblemas === 0 ? '🎉 Nenhum problema encontrado!' : 'Total de itens a revisar: ' + totalProblemas);
+    ui.alert('Validação da planilha', msg, ui.ButtonSet.OK);
+
+  } catch(e) {
+    ui.alert('Erro na validação: ' + e.message);
+  }
+}
+
+// Helper local: Date → DD/MM/AAAA (para o relatório de validação)
+function _dmy_(d) {
+  if (!(d instanceof Date) || isNaN(d.getTime())) return '—';
+  var dd = ('0' + d.getDate()).slice(-2);
+  var mm = ('0' + (d.getMonth() + 1)).slice(-2);
+  return dd + '/' + mm + '/' + d.getFullYear();
 }
 
 
@@ -1044,11 +1201,11 @@ function novoProcesso() {
            '\nO painel ja vai exibir o novo processo na proxima atualizacao.');
 }
 
-// Helper: retorna os dias da fase externa por modalidade
+// Helper: retorna os dias da fase externa por modalidade (lê PORTARIA_638)
 function faseExternaDias(modalidade) {
-  if (/direta|dispensa|inexig/i.test(modalidade)) return 30;
-  if (/concorrência|concorrencia/i.test(modalidade)) return 100;
-  return 90; // Pregão Eletrônico (padrão)
+  if (/direta|dispensa|inexig/i.test(modalidade)) return PORTARIA_638.FASE_EXTERNA.DIRETA;
+  if (/concorrência|concorrencia/i.test(modalidade)) return PORTARIA_638.FASE_EXTERNA.CONCORRENCIA;
+  return PORTARIA_638.FASE_EXTERNA.PREGAO; // Pregão Eletrônico (padrão)
 }
 
 // ════════════════════════════════════════════════════════════════════════

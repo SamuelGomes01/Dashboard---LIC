@@ -764,6 +764,20 @@ function iniciarProcessos(params) {
 // params: {linhaEtapa, processoId, nomeEtapa, dataRealizacao (YYYY-MM-DD),
 //          motivo, servidor, diasAtraso}
 // Grava na planilha E appenda no histórico (append-only).
+// ── _d0DoProcesso_: retorna a D0 (Date) do processo, ou null ──
+function _d0DoProcesso_(pid) {
+  var shP = _ss_().getSheetByName(ABA_PROC);
+  var lP  = _lerAba_(shP, 'ProcessoID');
+  var iId = lP.header.indexOf('ProcessoID');
+  var iD0 = lP.header.indexOf('D0 (Data Abertura)');
+  if (iId < 0 || iD0 < 0) return null;
+  var alvo = String(pid || '').trim();
+  for (var i = lP.hIdx + 1; i < lP.values.length; i++) {
+    if (String(lP.values[i][iId] || '').trim() === alvo) return _parseDate_(lP.values[i][iD0]);
+  }
+  return null;
+}
+
 function concluirEtapa(params) {
   try {
     var sh  = _ss_().getSheetByName(ABA_ETP);
@@ -776,7 +790,18 @@ function concluirEtapa(params) {
 
     if (!cR || !cS) throw new Error('Colunas não encontradas. Verifique o cabeçalho da aba Etapas.');
 
+    // TRAVA 1: data obrigatória ao concluir
+    if (!params.dataRealizacao) return { ok: false, erro: 'Informe a data de conclusão da etapa antes de concluir.' };
     var dataObj = new Date(params.dataRealizacao + 'T12:00:00');
+    if (isNaN(dataObj.getTime())) return { ok: false, erro: 'Data de conclusão inválida.' };
+
+    // TRAVA 2: data não pode ser anterior à abertura (D0)
+    var d0Proc = _d0DoProcesso_(params.processoId);
+    if (d0Proc && dataObj < d0Proc) {
+      return { ok: false, erro: 'A data de conclusão (' + _toIso_(dataObj).split('-').reverse().join('/') +
+        ') é anterior à abertura do processo (' + _toIso_(d0Proc).split('-').reverse().join('/') + '). Verifique a data informada.' };
+    }
+
     sh.getRange(params.linhaEtapa, cR).setValue(dataObj).setNumberFormat('DD/MM/YYYY');
     sh.getRange(params.linhaEtapa, cS).setValue('Concluída');
 
@@ -889,6 +914,28 @@ function getHistorico() {
   var ss = _ss_();
   var sh = ss.getSheetByName(ABA_HIST);
   if (!sh || sh.getLastRow() < 2) return [];
+
+  // Mapa pid -> { objeto, suap } para exibir o NOME do processo (e link SUAP)
+  // no lugar do ProcessoID, que nao diz nada ao usuario.
+  var procInfo = {};
+  (function() {
+    var shP = ss.getSheetByName(ABA_PROC);
+    if (!shP) return;
+    var lP = _lerAba_(shP, 'ProcessoID');
+    var iId  = lP.header.indexOf('ProcessoID');
+    var iObj = lP.header.indexOf('Objeto');
+    var iSua = lP.header.indexOf('Link SUAP');
+    if (iId < 0) return;
+    for (var k = lP.hIdx + 1; k < lP.values.length; k++) {
+      var p = String(lP.values[k][iId] || '').trim();
+      if (!p) continue;
+      procInfo[p] = {
+        objeto: iObj >= 0 ? String(lP.values[k][iObj] || '').trim() : '',
+        suap:   iSua >= 0 ? String(lP.values[k][iSua] || '').trim() : ''
+      };
+    }
+  })();
+
   var data = sh.getDataRange().getValues();
   var r = [];
   for (var i = 1; i < data.length; i++) {
@@ -897,10 +944,15 @@ function getHistorico() {
     var etapa = String(row[2] || '').trim();
     var motivo = String(row[4] || '').trim();
     if (!pid || !etapa || !motivo) continue;
+    var info = procInfo[pid] || {};
+    var suap = info.suap || '';
+    if (suap === '#') suap = '';
     r.push({
       ts: row[0] instanceof Date ? row[0].getTime() : 0,
       tsStr: row[0] instanceof Date ? row[0].toLocaleDateString('pt-BR') : String(row[0]),
       pid: pid,
+      objeto: info.objeto || '',
+      suap: suap,
       etapa: etapa,
       servidor: String(row[3] || '').trim(),
       motivo: motivo,
@@ -1853,7 +1905,10 @@ function getCapacidadeApp() {
       if (procConcluidoCap[pid]) continue;
       var fase = String(row2[5]||'').trim();
       var faseKind = fase.toLowerCase().indexOf('ext') >= 0 ? 'ext' : 'int';
-      if (faseCorrenteCap[pid] && faseCorrenteCap[pid] !== faseKind) continue;
+      // Esconde apenas a linha INTERNA depois que a fase corrente virou externa
+      // (o servidor interno já saiu). A linha EXTERNA "por vir" permanece visível
+      // enquanto a fase corrente ainda é interna, para o gestor planejar a próxima fase.
+      if (faseCorrenteCap[pid] === 'ext' && faseKind === 'int') continue;
       var pts11 = parseNum_(row2[6]);
       var pts12 = parseNum_(row2[7]);
       var pts23 = parseNum_(row2[8]);
