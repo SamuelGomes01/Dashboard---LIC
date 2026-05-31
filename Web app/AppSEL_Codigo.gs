@@ -163,11 +163,11 @@ function _servidoresValidosMap_() {
   var map = {};
   try {
     getServidoresApp().forEach(function(s) {
-      if (s.nome) map[String(s.nome).trim().toLowerCase()] = s.nome;
+      if (s.nome) map[_normServidorNome_(s.nome)] = s.nome;
     });
   } catch(e) {
     ['Amanda','Beatriz','Bruno','Samuel'].forEach(function(n) {
-      map[n.toLowerCase()] = n;
+      map[_normServidorNome_(n)] = n;
     });
   }
   return map;
@@ -541,7 +541,8 @@ function getEtapasParaApp() {
     });
   }
 
-  // ── Mapa ProcessoID → servidor (fase interna, ativo = Sim) ───────────
+  // ── Mapa ProcessoID → servidor por fase. Mantém o responsável cadastrado
+  // mesmo quando a fase está inativa, pois regressões precisam desse vínculo.
   var shCap = ss.getSheetByName('📊 Capacidade');
   var servMap = {};
   if (shCap) {
@@ -564,11 +565,11 @@ function getEtapasParaApp() {
             if (!servMap[cpid]) servMap[cpid] = { int: '', ext: '', hasInt: false, hasExt: false };
             if (cfase.indexOf('ext') >= 0) {
               servMap[cpid].hasExt = true;
-              if (_isSim_(cativo)) servMap[cpid].ext = nomeNorm;
+              if (!servMap[cpid].ext || _isSim_(cativo)) servMap[cpid].ext = nomeNorm;
             } else {
               // fase interna ou sem fase especificada
               servMap[cpid].hasInt = true;
-              if (_isSim_(cativo)) servMap[cpid].int = nomeNorm;
+              if (!servMap[cpid].int || _isSim_(cativo)) servMap[cpid].int = nomeNorm;
             }
           }
         }
@@ -797,7 +798,7 @@ function concluirEtapa(params) {
     // ── Verifica transição de fase interna → externa ───────────────
     // Detecta se esta era a última etapa da fase interna ainda não concluída.
     // Se sim: desativa a linha de fase interna na Capacidade (Ativo = Não),
-    // sinalizando que aquele servidor concluiu sua parte e os pontos saem do cálculo.
+    // sinalizando que aquele servidor concluiu sua parte e a carga deixa de contar.
     var transicao = _verificarTransicaoFase_(params.processoId, params.linhaEtapa, sh, lEt, hdr);
     _sincronizarCapacidadeComEtapas_();
     return { ok: true, transicaoFase: transicao.feita, servidorExt: transicao.servidorExt };
@@ -810,7 +811,8 @@ function concluirEtapa(params) {
 // ── _verificarTransicaoFase_ ──────────────────────────────────────────────
 // Verifica se, após a conclusão da etapa indicada, todas as etapas de
 // Fase Interna do processo estão concluídas. Se sim, inativa a linha de
-// fase interna na Capacidade (Ativo = Não) para zerar a pontuação.
+// fase interna na Capacidade (Ativo = Não), preservando os pontos para
+// possível retorno de fase.
 // Retorna { feita: bool, servidorExt: string }.
 function _verificarTransicaoFase_(pid, linhaConcluidaBase1, shEtapas, lEt, hdr) {
   var iPid = hdr.indexOf('ProcessoID');
@@ -1001,11 +1003,11 @@ function enviarAvisosPrazo() {
 
   // Monta o cabeçalho HTML dos e-mails
   function htmlHeader_(titulo, subtitulo) {
-    return '<div style="font-family:Arial,sans-serif;max-width:600px;color:#1e293b;">'
-      + '<div style="background:#1a3a5c;color:#fff;padding:14px 20px;border-radius:8px 8px 0 0;">'
-      + '<h2 style="margin:0;font-size:16px;">' + titulo + '</h2>'
-      + (subtitulo ? '<p style="margin:3px 0 0;font-size:12px;opacity:.8;">' + subtitulo + '</p>' : '')
-      + '</div><div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;padding:16px;">';
+    return '<div style="font-family:Arial,sans-serif;max-width:640px;color:#1e293b;line-height:1.45;">'
+      + '<div style="background:#1a3a5c;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0;">'
+      + (subtitulo ? '<p style="margin:0 0 5px;font-size:12px;opacity:.82;">' + subtitulo + '</p>' : '')
+      + '<h2 style="margin:0;font-size:18px;">' + titulo + '</h2>'
+      + '</div><div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;padding:18px;">';
   }
 
   function enviar_(dest, assunto, htmlBody) {
@@ -1033,17 +1035,21 @@ function enviarAvisosPrazo() {
     return url && url !== '#' && /^https?:\/\//i.test(url);
   }
 
+  function processoNomeHtml_(p) {
+    return htmlEsc_(p.nome || 'Processo sem identificação');
+  }
+
   function processoRefHtml_(p) {
-    var nome = htmlEsc_(p.nome || '');
+    var nome = processoNomeHtml_(p);
     if (p.num) {
       var num = htmlEsc_(p.num);
       var suap = String(p.suap || '').trim();
       var suapHtml = linkValido_(suap)
         ? '<a href="' + htmlEsc_(suap) + '" style="color:#1d4ed8;text-decoration:none;font-weight:700;">' + num + '</a>'
         : '<b>' + num + '</b>';
-      return 'N° SUAP ' + suapHtml + (nome ? ' — ' + nome : '');
+      return '<b>' + nome + '</b> (N° SUAP ' + suapHtml + ')';
     }
-    return nome ? '<b>' + nome + '</b>' : 'Processo sem identificação';
+    return '<b>' + nome + '</b>';
   }
 
   function processoRefTexto_(p) {
@@ -1052,7 +1058,12 @@ function enviarAvisosPrazo() {
 
   function respGenerico_(nome) {
     var n = String(nome || '').toLowerCase();
-    return !n || n.indexOf('equipe') >= 0 || n.indexOf('planejamento') >= 0;
+    return !n
+      || n.indexOf('equipe') >= 0
+      || n.indexOf('planejamento') >= 0
+      || n.indexOf('decof') >= 0
+      || n.indexOf('diad') >= 0
+      || n.indexOf('setor') >= 0;
   }
 
   function statusParado_(status) {
@@ -1092,15 +1103,39 @@ function enviarAvisosPrazo() {
     var p  = av.p;
     var et = av.et;
     var faseEt = String(et.fase || '').toLowerCase();
-    var respAtual = String(et.agente || '').trim();
+    var respEtapa = String(et.agente || '').trim();
+    var respAtual = respEtapa;
+    var servidorFase = faseEt.indexOf('ext') >= 0
+      ? (p.servidorExt || p.servidor || '')
+      : (p.servidor || p.servidorExt || '');
     if (respGenerico_(respAtual)) {
-      respAtual = faseEt.indexOf('ext') >= 0 ? (p.servidorExt || p.servidor || '') : (p.servidor || p.servidorExt || '');
+      respAtual = servidorFase;
     }
     var procRefHtml = processoRefHtml_(p);
     var procRefTexto = processoRefTexto_(p);
+    var appAssinatura = '<br><br>Atenciosamente,<br><b>App de Gestão de Prazos/Tarefas - SEL</b>'
+      + '<br><span style="color:#64748b;font-size:12px;">Mensagem automática do Sistema.</span>';
+    var contatoHtml = 'Em caso de dúvidas, entre em contato através do e-mail <a href="mailto:central@cp2.g12.br" style="color:#1d4ed8;text-decoration:none;font-weight:700;">central@cp2.g12.br</a>.';
+
+    var responsaveis = [];
+    [respEtapa, servidorFase].forEach(function(nome) {
+      nome = String(nome || '').trim();
+      if (nome && responsaveis.indexOf(nome) < 0) responsaveis.push(nome);
+    });
+    var responsaveisHtml = responsaveis.map(function(nome) {
+      return '<b>' + htmlEsc_(nome) + '</b>';
+    }).join(' e ');
+    var fraseResponsaveis = responsaveis.length > 1
+      ? 'Cujos responsáveis são ' + responsaveisHtml + '.'
+      : (responsaveis.length === 1 ? 'Cujo responsável é ' + responsaveisHtml + '.' : 'Não há responsável cadastrado para esta etapa.');
+
+    var respEmailNome = respAtual;
+    if ((!respEmailNome || !(emailsConfig[respEmailNome] || EMAILS_SEL[respEmailNome])) && servidorFase) {
+      respEmailNome = servidorFase;
+    }
 
     // Determina se é processo "da chefia" (chefe é o responsável ou não há servidor)
-    var isChefProc = !respAtual || CHEFES_LISTA.indexOf(respAtual) >= 0;
+    var isChefProc = !respEmailNome || CHEFES_LISTA.indexOf(respEmailNome) >= 0;
 
     // Calcula nova data prevista de conclusão do processo (apenas para vencidos)
     var novaDataConcStr = '';
@@ -1121,39 +1156,44 @@ function enviarAvisosPrazo() {
     }
 
     // Textos dinâmicos por tipo
-    var txtPrazo, corPrazo, prefixoAssunto;
+    var txtPrazo, corPrazo, prefixoAssunto, mensagemPadrao;
     if (tipo === 'vencido') {
       corPrazo      = '#dc2626';
-      txtPrazo      = '🔴 A etapa <b>' + htmlEsc_(et.nome) + '</b> sofreu <b>' + av.diasAtraso + ' dia' + (av.diasAtraso > 1 ? 's úteis' : ' útil') + '</b> de atraso'
-        + (novaDataConcStr ? '. Por conta disso, o prazo de conclusão do processo foi postergado para <b>' + novaDataConcStr + '</b>' : '')
-        + '.';
+      txtPrazo      = 'Vencida há ' + av.diasAtraso + ' dia' + (av.diasAtraso > 1 ? 's úteis' : ' útil');
       prefixoAssunto = '⚠️ Etapa vencida';
+      mensagemPadrao = 'Prezado(a), atenção! A etapa <b>' + htmlEsc_(et.nome) + '</b> do processo ' + procRefHtml
+        + ' está vencida há <b>' + av.diasAtraso + ' dia' + (av.diasAtraso > 1 ? 's úteis' : ' útil') + '</b>. '
+        + fraseResponsaveis + ' '
+        + (novaDataConcStr ? 'Por conta disso, o prazo de conclusão do processo foi postergado para <b>' + novaDataConcStr + '</b>. ' : '')
+        + contatoHtml;
     } else {
       corPrazo      = av.dias === 0 ? '#dc2626' : '#d97706';
-      txtPrazo      = av.dias === 0 ? '🔴 Vence <b>HOJE</b>'
-                    : '🟡 Vence em <b>' + av.dias + ' dia' + (av.dias > 1 ? 's úteis' : ' útil') + '</b>';
+      txtPrazo      = av.dias === 0 ? 'Vence hoje'
+                    : 'Vence em ' + av.dias + ' dia' + (av.dias > 1 ? 's úteis' : ' útil');
       prefixoAssunto = '⏰ Prazo próximo';
+      mensagemPadrao = 'Prezado(a), atenção! A etapa <b>' + htmlEsc_(et.nome) + '</b> do processo ' + procRefHtml + ' '
+        + (av.dias === 0 ? 'vence <b style="color:#dc2626;">hoje</b>' : 'vence em <b>' + av.dias + ' dia' + (av.dias > 1 ? 's úteis' : ' útil') + '</b>')
+        + '. Organize o que for necessário para evitar atrasos no processo. ' + contatoHtml;
     }
 
     var bloco = '<div style="border-left:4px solid '+corPrazo+';padding:8px 12px;margin:12px 0;background:#fafafa;border-radius:0 6px 6px 0;">'
-      + procRefHtml + '<br>'
-      + 'Etapa: <b>' + htmlEsc_(et.nome) + '</b>'
-      + (respAtual ? ' · Responsável: <b>' + htmlEsc_(respAtual) + '</b>' : '')
-      + '<br>' + txtPrazo
-      + (tipo !== 'vencido' ? ' <span style="color:#64748b;font-size:12px;">(prazo: ' + isoParaBR_(et.fim_iso) + ')</span>' : '')
+      + '<b>Resumo do aviso</b><br>'
+      + '<span style="color:#334155;">' + htmlEsc_(txtPrazo) + '</span>'
+      + (responsaveisHtml ? '<br><span style="color:#64748b;">Responsável(is): ' + responsaveisHtml + '</span>' : '')
+      + (tipo !== 'vencido' ? '<br><span style="color:#64748b;font-size:12px;">Prazo da etapa: ' + isoParaBR_(et.fim_iso) + '</span>' : '')
       + '</div>';
 
     if (av.aguardandoReq) {
       if (p.emailR && p.emailR.indexOf('@') > 0) {
         var txtAguardando = tipo === 'vencido'
-          ? 'Esta etapa está aguardando manifestação do setor requisitante e o prazo já venceu. Pedimos verificar as pendências e responder ao SEL.'
-          : 'Esta etapa está aguardando manifestação do setor requisitante e possui prazo próximo. Pedimos verificar as pendências e responder ao SEL.';
-        var bodyAguardando = htmlHeader_('Pendência do requisitante — SEL/CPII', 'Colégio Pedro II · Setor de Licitações')
-          + 'Olá!<br><br>O processo ' + procRefHtml
-          + ' está na etapa <b>' + htmlEsc_(et.nome) + '</b> e consta como <b>Aguardando requisitante</b>.<br><br>'
-          + txtAguardando
+          ? 'está aguardando manifestação do setor requisitante e o prazo já venceu'
+          : 'está aguardando manifestação do setor requisitante e possui prazo próximo';
+        var bodyAguardando = htmlHeader_('App de Gestão de Prazos/Tarefas - SEL', 'Pendência do requisitante · Colégio Pedro II')
+          + 'Prezado(a), atenção! O processo ' + procRefHtml + ' está na etapa <b>' + htmlEsc_(et.nome)
+          + '</b>, consta como <b>Aguardando requisitante</b> e ' + txtAguardando
+          + '. Pedimos verificar as pendências e responder ao SEL. ' + contatoHtml
           + '<br><br>' + bloco
-          + '<br><span style="color:#64748b;font-size:12px;">Dúvidas? Entre em contato com o SEL: ramais 2163-5762 / 5718 / 5763.</span>';
+          + appAssinatura;
         if (enviar_(p.emailR, 'Pendência do requisitante — ' + procRefTexto, bodyAguardando)) enviados++;
       }
       return;
@@ -1161,29 +1201,23 @@ function enviarAvisosPrazo() {
 
     // 1. E-mail para o servidor responsável (apenas se NÃO for processo da chefia)
     if (!isChefProc) {
-      var emailServ = emailsConfig[respAtual] || EMAILS_SEL[respAtual] || '';
+      var emailServ = emailsConfig[respEmailNome] || EMAILS_SEL[respEmailNome] || '';
       if (isChefiaEmail(emailServ)) {
-        var bodyServ = htmlHeader_(prefixoAssunto + ' — SEL/CPII', 'Colégio Pedro II · Setor de Licitações')
-          + 'Olá, <b>' + htmlEsc_(respAtual) + '</b>!<br><br>'
-          + (tipo === 'vencido'
-            ? 'A etapa <b>' + htmlEsc_(et.nome) + '</b> do processo ' + procRefHtml + ' está vencida e não foi concluída. Atualize o status no App de Gestão do SEL.'
-            : 'A etapa <b>' + htmlEsc_(et.nome) + '</b> do processo ' + procRefHtml + ' ' + (av.dias === 0 ? 'vence <b style="color:#dc2626;">HOJE</b>.' : 'vence em <b>' + av.dias + ' dia' + (av.dias > 1 ? 's úteis' : ' útil') + '</b>. Atualize o status no App de Gestão do SEL.'))
-          + '<br><br>' + bloco;
+        var bodyServ = htmlHeader_('App de Gestão de Prazos/Tarefas - SEL', prefixoAssunto + ' · Colégio Pedro II')
+          + mensagemPadrao
+          + '<br><br>' + bloco
+          + appAssinatura;
         if (enviar_(emailServ, prefixoAssunto + ': ' + procRefTexto + ' — ' + et.nome, bodyServ)) enviados++;
       }
     }
 
     // 2. E-mail para a chefia do SEL (sempre, com contexto completo)
     if (chefiaEmails.length) {
-      var bodyChef = htmlHeader_(prefixoAssunto + ' — SEL/CPII', 'Colégio Pedro II · Setor de Licitações')
+      var bodyChef = htmlHeader_('App de Gestão de Prazos/Tarefas - SEL', prefixoAssunto + ' · Colégio Pedro II')
         + (isChefProc ? '<b>Processo sob responsabilidade da chefia.</b><br><br>' : '')
-        + (tipo === 'vencido'
-          ? 'A etapa <b>' + htmlEsc_(et.nome) + '</b> do processo ' + procRefHtml + ' está vencida há <b>' + av.diasAtraso + ' dia' + (av.diasAtraso > 1 ? 's úteis' : ' útil') + '</b>.'
-            + (respAtual ? ' Responsável: <b>' + htmlEsc_(respAtual) + '</b>.' : ' Sem servidor designado.')
-          : 'A etapa <b>' + htmlEsc_(et.nome) + '</b> do processo ' + procRefHtml + ' '
-            + (av.dias === 0 ? 'vence <b style="color:#dc2626;">HOJE</b>.' : 'vence em <b>' + av.dias + ' dia' + (av.dias > 1 ? 's úteis' : ' útil') + '</b>.')
-            + (respAtual ? ' Responsável: <b>' + htmlEsc_(respAtual) + '</b>.' : ' Sem servidor designado.'))
-        + '<br><br>' + bloco;
+        + mensagemPadrao
+        + '<br><br>' + bloco
+        + appAssinatura;
       chefiaEmails.forEach(function(emailChef) {
         if (enviar_(emailChef, prefixoAssunto + ': ' + procRefTexto + ' — ' + et.nome, bodyChef)) enviados++;
       });
@@ -1191,14 +1225,10 @@ function enviarAvisosPrazo() {
 
     // 3. E-mail para o setor requisitante (se tiver e-mail cadastrado)
     if (p.emailR && p.emailR.indexOf('@') > 0) {
-      var txtReq = tipo === 'vencido'
-        ? 'Esta etapa está com o prazo vencido e será regularizada pelo Setor de Licitações em breve.'
-        : 'Esta etapa ' + (av.dias === 0 ? 'vence <b style="color:#dc2626;">hoje</b>' : 'vence em <b>' + av.dias + ' dia' + (av.dias > 1 ? 's</b>' : '</b>')) + '. Aguarde movimentações.';
-      var bodyReq = htmlHeader_('Atualização do seu processo — SEL/CPII', 'Colégio Pedro II · Setor de Licitações')
-        + 'Olá!<br><br>O processo ' + procRefHtml
-        + ' está na etapa <b>' + htmlEsc_(et.nome) + '</b>.<br><br>'
-        + txtReq
-        + '<br><br><span style="color:#64748b;font-size:12px;">Dúvidas? Entre em contato com o SEL: ramais 2163-5762 / 5718 / 5763.</span>';
+      var bodyReq = htmlHeader_('App de Gestão de Prazos/Tarefas - SEL', 'Atualização do processo · Colégio Pedro II')
+        + mensagemPadrao
+        + '<br><br>' + bloco
+        + appAssinatura;
       if (enviar_(p.emailR, prefixoAssunto + ' — ' + p.nome, bodyReq)) enviados++;
     }
   }
@@ -1341,6 +1371,80 @@ function cadastrarProcesso(params) {
       shE.getRange(sepRow + 9, colSt + 1).setValue('Não se aplica');
     }
 
+    // ── Cria linhas iniciais na Capacidade para pontuação posterior ─────
+    (function criarCapacidadeInicial_() {
+      var shC = ss.getSheetByName('📊 Capacidade');
+      if (!shC) return;
+      var capData = shC.getRange(1, 1, shC.getLastRow(), shC.getLastColumn()).getValues();
+      var regHdr = -1;
+      for (var ch = 0; ch < capData.length; ch++) {
+        var cr = capData[ch].map(function(c){ return String(c).trim(); });
+        if (cr[0].indexOf('Servidor') >= 0 && cr[2] === 'ProcessoID') { regHdr = ch; break; }
+      }
+      if (regHdr < 0) return;
+      var hC = capData[regHdr].map(function(c){ return String(c).trim(); });
+      function col_(nomes, fallback) {
+        for (var ci = 0; ci < hC.length; ci++) {
+          var hn = hC[ci].toLowerCase();
+          for (var ni = 0; ni < nomes.length; ni++) {
+            if (hn === nomes[ni].toLowerCase() || hn.indexOf(nomes[ni].toLowerCase()) >= 0) return ci;
+          }
+        }
+        return fallback;
+      }
+      var cServ = col_(['Servidor'], 0);
+      var cObj  = col_(['Processo / Objeto', 'Objeto', 'Processo'], 1);
+      var cPid  = col_(['ProcessoID'], 2);
+      var cAtv  = col_(['Ativo'], 3);
+      var cMod  = col_(['Modalidade'], 4);
+      var cFase = col_(['Fase da Carga', 'Fase Atual'], 5);
+      var cP1   = col_(['Modalidade pts', 'Modalidade(pts)', 'Mod pts', 'Mod (pts)'], 6);
+      var cP2   = col_(['Natureza pts', 'Natureza(pts)', 'Nat pts', 'Nat (pts)'], 7);
+      var cP3   = col_(['Sessao pts', 'Sessao(pts)', 'Sessão pts', 'Sess pts', 'Sess (pts)'], 8);
+      var cTotal = col_(['Total'], -1);
+      var cargas = [{
+        servidor: params.respInterno || '',
+        fase: 'Fase Interna'
+      }];
+      if (ehPE) cargas.push({
+        servidor: params.respExterno || '',
+        fase: 'Fase Externa'
+      });
+      cargas.forEach(function(carga) {
+        if (!carga.servidor) return;
+        var faseBusca = carga.fase.toLowerCase().indexOf('ext') >= 0 ? 'ext' : 'int';
+        for (var ex = regHdr + 1; ex < capData.length; ex++) {
+          if (String(capData[ex][cPid] || '').trim() === novoPID &&
+              String(capData[ex][cFase] || '').toLowerCase().indexOf(faseBusca) >= 0) {
+            return;
+          }
+        }
+        var targetRow = -1;
+        for (var er = regHdr + 1; er < capData.length; er++) {
+          if (!String(capData[er][cServ] || '').trim() && !String(capData[er][cPid] || '').trim()) {
+            targetRow = er + 1; break;
+          }
+        }
+        if (targetRow < 0) targetRow = shC.getLastRow() + 1;
+        var nova = new Array(Math.max(hC.length, 10)).fill('');
+        nova[cServ] = carga.servidor;
+        nova[cObj]  = params.objeto;
+        nova[cPid]  = novoPID;
+        nova[cAtv]  = 'Não';
+        nova[cMod]  = params.modalidade;
+        nova[cFase] = carga.fase;
+        nova[cP1] = 0; nova[cP2] = 0; nova[cP3] = 0;
+        if (cTotal >= 0) nova[cTotal] = 0;
+        var rng = shC.getRange(targetRow, 1, 1, nova.length);
+        var dvs = rng.getDataValidations();
+        rng.clearDataValidations().setValues([nova]);
+        rng.setDataValidations(dvs);
+        capData[targetRow - 1] = nova;
+      });
+    })();
+
+    _sincronizarCapacidadeComEtapas_();
+
     return { ok: true, pid: novoPID };
   } catch(e) {
     return { ok: false, erro: e.message };
@@ -1481,6 +1585,9 @@ function _sincronizarCapacidadeComEtapas_() {
     }
 
     var criados = 0, reativados = 0;
+    function servidorValidoCap_(nome) {
+      return servValidos[_normServidorNome_(nome)] || '';
+    }
     Object.keys(etapas).forEach(function(pid) {
       var proc = procMap[pid];
       if (!proc || !proc.temD0) return;
@@ -1504,15 +1611,16 @@ function _sincronizarCapacidadeComEtapas_() {
         return;
       }
       if (!atual && concl > 0) atual = primeiraPendente;
-      if (!atual || !atual.agente) return;
+      if (!atual) return;
 
       var isExt = String(atual.fase || '').toLowerCase().indexOf('ext') >= 0;
       var kind = isExt ? 'ext' : 'int';
       var key = pid + '|' + kind;
       var outroKey = pid + '|' + (isExt ? 'int' : 'ext');
-      var agenteKey = String(atual.agente || '').trim().toLowerCase();
-      var agenteValido = servValidos[agenteKey];
+      var agenteValido = servidorValidoCap_(atual.agente);
+      if (!agenteValido && capMap[key]) agenteValido = servidorValidoCap_(capMap[key].servidor);
       if (!agenteValido) return;
+      var agenteKey = _normServidorNome_(agenteValido);
       if (capMap[outroKey]) {
         if (_isSim_(capMap[outroKey].ativo)) {
           shC.getRange(capMap[outroKey].row, iAtivo + 1).setValue('Não');
@@ -1520,7 +1628,7 @@ function _sincronizarCapacidadeComEtapas_() {
       }
 
       if (capMap[key]) {
-        if (String(capMap[key].servidor || '').trim().toLowerCase() !== agenteKey) {
+        if (_normServidorNome_(capMap[key].servidor) !== agenteKey) {
           var cellServ = shC.getRange(capMap[key].row, 1);
           var dvServ = cellServ.getDataValidation();
           cellServ.clearDataValidations().setValue(agenteValido);
@@ -1623,6 +1731,7 @@ function getCapacidadeApp() {
   })();
 
   var procConcluidoCap = {};
+  var faseCorrenteCap = {};
   (function() {
     var ss3 = _ss_();
     var shE3 = ss3.getSheetByName(ABA_ETP);
@@ -1644,12 +1753,24 @@ function getCapacidadeApp() {
       if (_isEtapaContratual_(fase3, nome3)) continue;
       var st3 = _normStatus_(rowE3[iStatus3]);
       if (st3 === 'na') continue;
-      if (!accConcl[pid3]) accConcl[pid3] = { total: 0, ok: 0 };
+      var faseKind3 = fase3.toLowerCase().indexOf('ext') >= 0 ? 'ext' : 'int';
+      if (!accConcl[pid3]) accConcl[pid3] = { total: 0, ok: 0, ativa: '', primeiraPendente: '', primeiraPendentePosOk: '' };
       accConcl[pid3].total++;
       if (st3 === 'ok') accConcl[pid3].ok++;
+      else if (['andamento','aguardando','paralisado','atrasado'].indexOf(st3) >= 0 && !accConcl[pid3].ativa) accConcl[pid3].ativa = faseKind3;
+      else if (st3 === 'pendente') {
+        if (!accConcl[pid3].primeiraPendente) accConcl[pid3].primeiraPendente = faseKind3;
+        if (accConcl[pid3].ok > 0 && !accConcl[pid3].primeiraPendentePosOk) accConcl[pid3].primeiraPendentePosOk = faseKind3;
+      }
     }
     Object.keys(accConcl).forEach(function(pid3) {
       procConcluidoCap[pid3] = accConcl[pid3].total > 0 && accConcl[pid3].ok >= accConcl[pid3].total;
+      if (!procConcluidoCap[pid3]) {
+        faseCorrenteCap[pid3] = accConcl[pid3].ativa
+          || accConcl[pid3].primeiraPendentePosOk
+          || accConcl[pid3].primeiraPendente
+          || '';
+      }
     });
   })();
 
@@ -1731,6 +1852,8 @@ function getCapacidadeApp() {
       if (!serv || !pid) continue;
       if (procConcluidoCap[pid]) continue;
       var fase = String(row2[5]||'').trim();
+      var faseKind = fase.toLowerCase().indexOf('ext') >= 0 ? 'ext' : 'int';
+      if (faseCorrenteCap[pid] && faseCorrenteCap[pid] !== faseKind) continue;
       var pts11 = parseNum_(row2[6]);
       var pts12 = parseNum_(row2[7]);
       var pts23 = parseNum_(row2[8]);
@@ -1749,7 +1872,7 @@ function getCapacidadeApp() {
         emailR:   emailMapCap[pid] || '',
         concluido: !!procConcluidoCap[pid]
       };
-      if (fase.toLowerCase().indexOf('ext') >= 0) registrosExt.push(rec);
+      if (faseKind === 'ext') registrosExt.push(rec);
       else registrosInt.push(rec);
     }
   }

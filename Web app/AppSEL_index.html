@@ -4,7 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#1a3a5c">
-  <title>SEL · Etapas</title>
+  <meta name="application-name" content="AppSEL">
+  <meta name="apple-mobile-web-app-title" content="AppSEL">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="msapplication-TileColor" content="#1a3a5c">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='42' fill='%231a3a5c'/%3E%3Ccircle cx='96' cy='72' r='34' fill='%23e8ecf0'/%3E%3Cpath d='M47 146c9-30 30-45 49-45s40 15 49 45' fill='%23e8ecf0'/%3E%3Cpath d='M63 72l22 22 45-48' fill='none' stroke='%2316a34a' stroke-width='16' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='42' fill='%231a3a5c'/%3E%3Ccircle cx='96' cy='72' r='34' fill='%23e8ecf0'/%3E%3Cpath d='M47 146c9-30 30-45 49-45s40 15 49 45' fill='%23e8ecf0'/%3E%3Cpath d='M63 72l22 22 45-48' fill='none' stroke='%2316a34a' stroke-width='16' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <title>AppSEL · Gestão de Etapas</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -40,7 +49,7 @@
 
     /* ── App shell ─────────────────────────────────────────────── */
     #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
-    .app-header { background: var(--navy); color: #fff; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .app-header { background: var(--navy); color: #fff; padding: calc(12px + env(safe-area-inset-top)) 16px 12px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .app-header-title { font-weight: 700; font-size: 16px; }
     .app-header-sub { font-size: 11px; opacity: .65; margin-top: 1px; }
     .user-chip { background: rgba(255,255,255,.15); border-radius: 20px; padding: 5px 11px; font-size: 12px; cursor: pointer; white-space: nowrap; position: relative; }
@@ -89,7 +98,8 @@
     .proc-card { background: var(--card); border-radius: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.07); margin-bottom: 10px; overflow: hidden; cursor: pointer; transition: transform .1s; position: relative; }
     .proc-warn-badge { position:absolute; top:8px; right:10px; width:20px; height:20px; border-radius:4px; background:#fffbeb; border:1.5px solid #f59e0b; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:#b45309; z-index:2; line-height:1; }
     .proc-card:active { transform: scale(.985); }
-    .proc-card-top { padding: 12px 14px 10px; display: flex; align-items: flex-start; gap: 10px; }
+    .proc-card-top { padding: 12px 14px 10px; display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+    .proc-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-right: 24px; }
     .proc-badge { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 20px; white-space: nowrap; flex-shrink: 0; margin-top: 1px; }
     .b-atrasado   { background:#fef2f2; color:var(--red); }
     .b-aguardando { background:#fff7ed; color:var(--amber); }
@@ -98,9 +108,7 @@
     .b-planejamento { background:#f1f5f9; color:var(--muted); }
     .b-ok         { background:#f0fdf4; color:var(--green); }
     .proc-info { flex:1; min-width:0; }
-    .proc-num  { font-size:11px; color:var(--muted); }
-    .proc-nome { font-weight:600; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .proc-req  { font-size:11px; color:var(--muted); margin-top:1px; }
+    .proc-nome { font-weight:600; font-size:14px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .proc-card-bot { padding: 0 14px 12px; }
     .pbar { height: 4px; background: var(--border); border-radius: 4px; overflow: hidden; margin-bottom: 6px; }
     .pbar-fill { height: 100%; background: var(--blue); border-radius: 4px; }
@@ -193,6 +201,9 @@
     .cfg-row .note { font-size: 12px; color: var(--muted); line-height: 1.5; }
     .btn-cfg { background: var(--navy); color: #fff; border: none; border-radius: 8px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
     .btn-cfg:disabled { opacity: .5; }
+    .cfg-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px; width: 100%; margin-top: 2px; align-items: center; }
+    .cfg-actions .btn-cfg { width: 100%; padding-left: 10px; padding-right: 10px; }
+    .cfg-actions #trigger-ok { grid-column: 1 / -1; line-height: 1.35; }
     #trigger-ok { font-size: 12px; color: var(--green); }
 
     /* ── Toast ─────────────────────────────────────────────────── */
@@ -269,6 +280,7 @@
     /* ── Cap process row ───────────────────────────────────────── */
     .cap-proc-row { background:var(--card); border-radius:10px; padding:10px 12px; box-shadow:0 1px 3px rgba(0,0,0,.05); display:flex; align-items:center; gap:10px; }
     .cap-proc-info { flex:1; min-width:0; }
+    .cap-proc-tags { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
     .cap-proc-nome { font-weight:600; font-size:13px; white-space:normal; word-break:break-word; }
     .cap-proc-meta { font-size:11px; color:var(--muted); margin-top:1px; }
     .cap-pts-badge { font-size:14px; font-weight:800; flex-shrink:0; }
@@ -281,6 +293,14 @@
     .pont-option-label { font-size:13px; font-weight:500; flex:1; }
     .pont-total-bar { background:var(--navy); color:#fff; border-radius:10px; padding:12px 16px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
     .pont-total-num { font-size:22px; font-weight:800; }
+    .dlg-card { position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(.96);width:min(92vw,420px);background:var(--card);border-radius:14px;box-shadow:0 18px 50px rgba(15,23,42,.32);z-index:701;padding:18px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s; }
+    .dlg-card.open { opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1); }
+    .dlg-title { font-size:16px;font-weight:800;color:var(--navy);margin-bottom:6px; }
+    .dlg-msg { font-size:13px;color:var(--text2);line-height:1.45;margin-bottom:12px;white-space:pre-line; }
+    .dlg-actions { display:flex;gap:8px;margin-top:14px;justify-content:flex-end; }
+    .dlg-actions .btn-cfg { min-width:92px;padding:10px 14px; }
+    .dlg-cancel { background:var(--bg);color:var(--muted);border:1.5px solid var(--border); }
+    #ov-dlg { z-index:700; }
 
     /* ── Misc ──────────────────────────────────────────────────── */
     [hidden] { display: none !important; }
@@ -360,7 +380,7 @@
         <div class="cfg-row cfg-row-col">
           <label>Trigger diário (10h30)</label>
           <span class="note">Instala um gatilho que roda todos os dias por volta das 10h30, no fuso do projeto. Processos suspensos não geram e-mail; etapas aguardando requisitante avisam apenas o requisitante cadastrado.</span>
-          <div style="display:flex;align-items:center;gap:10px;margin-top:2px;">
+          <div class="cfg-actions">
             <button class="btn-cfg" id="btn-trigger" onclick="instalarTrigger()">Instalar trigger</button>
             <button class="btn-cfg" id="btn-trigger-test" onclick="testarEmailAvisos()">Testar e-mail</button>
             <button class="btn-cfg" id="btn-trigger-run" onclick="executarAvisosAgora()">Enviar avisos agora</button>
@@ -512,6 +532,19 @@
 
 <!-- ══════════════════════ MODAL: PONTUAÇÃO GUIADA ═══════════════════ -->
 <div id="ov-pont" class="overlay"></div>
+<div id="ov-dlg" class="overlay"></div>
+<div id="modal-dlg" class="dlg-card" role="dialog" aria-modal="true">
+  <div class="dlg-title" id="dlg-title">Confirmar</div>
+  <div class="dlg-msg" id="dlg-msg"></div>
+  <div id="dlg-field-wrap" hidden>
+    <input class="field-input" id="dlg-input">
+  </div>
+  <div class="dlg-actions">
+    <button class="btn-cfg dlg-cancel" id="dlg-cancel" onclick="fecharDialogo_(false)">Cancelar</button>
+    <button class="btn-cfg" id="dlg-ok" onclick="fecharDialogo_(true)">Confirmar</button>
+  </div>
+</div>
+
 <div id="modal-pont" class="sheet" style="border-radius:0;top:0;max-height:100vh;">
   <div class="conc-topbar">
     <button class="btn-back" onclick="fecharPontuacao()">‹</button>
@@ -562,6 +595,49 @@ var SL = {
 // ══════════════════════════════════════════════════════════════════════
 // SERVIDORES — carregamento dinâmico e gestão
 // ══════════════════════════════════════════════════════════════════════
+var DLG_CB = null;
+function abrirDialogo_(opts, cb) {
+  opts = opts || {};
+  DLG_CB = cb || null;
+  document.getElementById('dlg-title').textContent = opts.titulo || 'Confirmar';
+  document.getElementById('dlg-msg').textContent = opts.mensagem || '';
+  document.getElementById('dlg-ok').textContent = opts.ok || 'Confirmar';
+  document.getElementById('dlg-cancel').textContent = opts.cancelar || 'Cancelar';
+  var wrap = document.getElementById('dlg-field-wrap');
+  if (opts.campo) {
+    var tag = opts.textarea ? 'textarea' : 'input';
+    wrap.innerHTML = '<' + tag + ' class="field-input" id="dlg-input"></' + tag + '>';
+    var inp = document.getElementById('dlg-input');
+    inp.value = opts.valor || '';
+    if (opts.tipo && tag === 'input') inp.type = opts.tipo;
+    if (opts.placeholder) inp.placeholder = opts.placeholder;
+    if (opts.textarea) inp.style.minHeight = '110px';
+    wrap.hidden = false;
+    setTimeout(function(){ inp.focus(); if (inp.select) inp.select(); }, 80);
+  } else {
+    wrap.hidden = true;
+    wrap.innerHTML = '<input class="field-input" id="dlg-input">';
+  }
+  document.getElementById('ov-dlg').classList.add('open');
+  document.getElementById('modal-dlg').classList.add('open');
+}
+function fecharDialogo_(ok) {
+  var cb = DLG_CB;
+  DLG_CB = null;
+  var inp = document.getElementById('dlg-input');
+  var valor = inp ? inp.value : '';
+  document.getElementById('ov-dlg').classList.remove('open');
+  document.getElementById('modal-dlg').classList.remove('open');
+  if (cb) cb(ok, valor);
+}
+function dialogoConfirmar_(titulo, mensagem, cb, okTxt) {
+  abrirDialogo_({ titulo: titulo, mensagem: mensagem, ok: okTxt || 'Confirmar' }, function(ok){ if (ok) cb(); });
+}
+function dialogoCampo_(opts, cb) {
+  opts.campo = true;
+  abrirDialogo_(opts, function(ok, valor){ if (ok) cb(String(valor || '').trim()); });
+}
+
 function isChefeAtual_() {
   return CHEFES.indexOf(SERVIDOR) >= 0;
 }
@@ -794,21 +870,27 @@ function salvarEditServ() {
 
 function removerServConfirm_(idx) {
   var s = SERV_DATA[idx];
-  if (!confirm('Remover ' + s.nome + ' da equipe?\nSe houver processo ativo vinculado a esse servidor, o sistema bloqueará a remoção.')) return;
-  var novaLista = SERV_DATA.filter(function(_, i){ return i !== idx; }).map(function(s){ return { nome:s.nome, cor:s.cor, isChefe:s.isChefe }; });
-  google.script.run
-    .withSuccessHandler(function(res) {
-      if (res.ok) {
-        localStorage.setItem('selServidores', JSON.stringify(novaLista));
-        aplicarServidores_(novaLista);
-        renderEquipeConfig_();
-        CAP_CARREGADO = false;
-        if (!document.getElementById('tab-capacidade').hidden) carregarCapacidade_();
-        toast('✓ Servidor removido.', 'ok');
-      } else { toast('Erro: '+(res.erro||''), 'err'); }
-    })
-    .withFailureHandler(function(e){ toast('Erro: '+(e.message||e), 'err'); })
-    .salvarServidoresApp(novaLista);
+  dialogoConfirmar_(
+    'Remover servidor',
+    'Remover ' + s.nome + ' da equipe?\n\nSe houver processo ativo vinculado a esse servidor, o sistema bloqueará a remoção.',
+    function() {
+      var novaLista = SERV_DATA.filter(function(_, i){ return i !== idx; }).map(function(s){ return { nome:s.nome, cor:s.cor, isChefe:s.isChefe }; });
+      google.script.run
+        .withSuccessHandler(function(res) {
+          if (res.ok) {
+            localStorage.setItem('selServidores', JSON.stringify(novaLista));
+            aplicarServidores_(novaLista);
+            renderEquipeConfig_();
+            CAP_CARREGADO = false;
+            if (!document.getElementById('tab-capacidade').hidden) carregarCapacidade_();
+            toast('✓ Servidor removido.', 'ok');
+          } else { toast('Erro: '+(res.erro||''), 'err'); }
+        })
+        .withFailureHandler(function(e){ toast('Erro: '+(e.message||e), 'err'); })
+        .salvarServidoresApp(novaLista);
+    },
+    'Remover'
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -841,7 +923,9 @@ function logout() {
   document.getElementById('tela-login').hidden = false;
 }
 
-function confirmarTroca() { if (confirm('Trocar de usuário?')) logout(); }
+function confirmarTroca() {
+  dialogoConfirmar_('Trocar usuário', 'Deseja sair deste perfil e escolher outro servidor?', logout, 'Trocar');
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // TABS
@@ -964,9 +1048,8 @@ function aplicarFiltros() {
     // Processo aparece no filtro do servidor S se:
     //   • S é o servidor da fase interna (sempre relevante enquanto fase interna ativa)
     //   • S é o servidor da fase externa E a fase externa já começou (ou não há servidor interno — pós-transição)
-    var mS = !F_SERV
-        || (p.servidor||'').toLowerCase() === fsl
-        || ((extAtiva_ || !p.servidor) && (p.servidorExt||'').toLowerCase() === fsl);
+    var respAtualFiltro_ = extAtiva_ ? (p.servidorExt || p.servidor || '') : (p.servidor || p.servidorExt || '');
+    var mS = !F_SERV || respAtualFiltro_.toLowerCase() === fsl;
     return mQ && mM && mS;
   });
   renderEtapas(filt);
@@ -1065,23 +1148,18 @@ function renderEtapas(filtrado) {
       var pct   = p.execucao;
       var idx   = DATA.indexOf(p);
       var alerta = (p.status !== 'aguardando' && p.status !== 'paralisado') && temPrazoVencido(p);
+      var extAtiva = p.etapaAtualIdx >= 0 && p.etapas[p.etapaAtualIdx] && (p.etapas[p.etapaAtualIdx].fase||'').toLowerCase().indexOf('ext') >= 0;
+      var respAtual = extAtiva ? (p.servidorExt || p.servidor || '') : (p.servidor || p.servidorExt || '');
+      var ownerHtml = respAtual
+        ? '<span style="'+servTagStyle_(SERV_DATA.find(function(s){return s.nome===respAtual;})||{cor:'#6b7280'})+';cursor:pointer;" title="Clique para trocar responsável" onclick="event.stopPropagation();abrirTrocaServ('+idx+')">'+esc(respAtual)+'</span>'
+        : (CHEFES.indexOf(SERVIDOR)>=0 ? '<span style="background:var(--bg);color:var(--muted);font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;cursor:pointer;" onclick="event.stopPropagation();abrirTrocaServ('+idx+')">+ Atribuir</span>' : '');
       out += '<div class="proc-card" onclick="abrirProcesso(' + idx + ')" style="'+(alerta?'border-left:4px solid #f59e0b;':'')+'">'
         + (alerta ? '<div class="proc-warn-badge" title="Prazo vencido — informe o motivo">!</div>' : '')
         + '<div class="proc-card-top">'
-        + '<span class="proc-badge b-' + p.status + '">' + (SL[p.status]||p.status).toUpperCase() + '</span>'
+        + '<div class="proc-tags"><span class="proc-badge b-' + p.status + '">' + (SL[p.status]||p.status).toUpperCase() + '</span>'
+        + ownerHtml + '</div>'
         + '<div class="proc-info">'
-        + '<div class="proc-num">' + (p.num?esc(p.num):'<span style="color:var(--muted);font-style:italic;">Nº SUAP pendente</span>')
-        + (p.servidor
-            ? '&nbsp;<span style="'+servTagStyle_(SERV_DATA.find(function(s){return s.nome===p.servidor;})||{cor:'#6b7280'})+';cursor:pointer;" title="Clique para trocar responsável" onclick="event.stopPropagation();abrirTrocaServ('+idx+')">'+esc(p.servidor)+'</span>'
-            + (p.servidorExt && p.etapaAtualIdx >= 0 && p.etapas[p.etapaAtualIdx] && (p.etapas[p.etapaAtualIdx].fase||'').toLowerCase().indexOf('ext') >= 0
-                ? '&nbsp;<span style="'+servTagStyle_(SERV_DATA.find(function(s){return s.nome===p.servidorExt;})||{cor:'#6b7280'})+'">'+esc(p.servidorExt)+'</span>'
-                : '')
-            : p.servidorExt
-            ? '&nbsp;<span style="'+servTagStyle_(SERV_DATA.find(function(s){return s.nome===p.servidorExt;})||{cor:'#6b7280'})+';cursor:pointer;" title="Fase externa em andamento — clique para editar" onclick="event.stopPropagation();abrirTrocaServ('+idx+')">'+esc(p.servidorExt)+'</span>'
-            : (CHEFES.indexOf(SERVIDOR)>=0 ? '&nbsp;<span style="background:var(--bg);color:var(--muted);font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;cursor:pointer;" onclick="event.stopPropagation();abrirTrocaServ('+idx+')">+ Atribuir</span>' : ''))
-        + '</div>'
         + '<div class="proc-nome">' + esc(p.nome) + '</div>'
-        + '<div class="proc-req">' + esc(p.req||'') + (p.modal?' · '+esc(p.modal):'') + '</div>'
         + '</div></div>'
         + '<div class="proc-card-bot">'
         + '<div class="pbar"><div class="pbar-fill" style="width:'+pct+'%;'+(pct===100?'background:var(--green)':'')+'"></div></div>'
@@ -1113,12 +1191,12 @@ function abrirProcesso(idx) {
   var hoje = new Date(); hoje.setHours(0,0,0,0);
 
   var extAtivo = p.servidorExt && p.etapaAtualIdx >= 0 && p.etapas[p.etapaAtualIdx] && (p.etapas[p.etapaAtualIdx].fase||'').toLowerCase().indexOf('ext') >= 0;
+  var respAtualModal = extAtivo ? (p.servidorExt || p.servidor || '') : (p.servidor || p.servidorExt || '');
   document.getElementById('proc-header').innerHTML =
     '<div class="sheet-title">' + esc(p.nome) + '</div>'
     + '<div class="sheet-sub">' + esc(p.num||p.id) + ' · ' + esc(p.modal||'') + ' · ' + esc(p.req||'') + '</div>'
-    + ((p.servidor || p.servidorExt) ? '<div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;">'
-        + (p.servidor ? '<span style="'+servTagStyle_(SERV_DATA.find(function(s){return s.nome===p.servidor;})||{cor:'#6b7280'})+'">'+esc(p.servidor)+'</span>' : '')
-        + (extAtivo || (!p.servidor && p.servidorExt) ? '<span style="'+servTagStyle_(SERV_DATA.find(function(s){return s.nome===p.servidorExt;})||{cor:'#6b7280'})+'">'+esc(p.servidorExt)+'</span>' : '')
+    + (respAtualModal ? '<div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;">'
+        + '<span style="'+servTagStyle_(SERV_DATA.find(function(s){return s.nome===respAtualModal;})||{cor:'#6b7280'})+'">'+esc(respAtualModal)+'</span>'
         + '</div>' : '');
 
   var body = '<div style="margin-bottom:14px;">'
@@ -1166,7 +1244,7 @@ function abrirProcesso(idx) {
       + (et.dias>0 && et.motivo ? '<div class="et-motivo">⚠ '+esc(et.motivo.substring(0,90))+(et.motivo.length>90?'…':'')+'</div>' : '')
       + (prazoTxt ? '<div class="et-prazo">'+prazoTxt+(et.fim_iso?' · '+isoToDisplay(et.fim_iso):'')+'</div>'
                   : (et.fim_iso ? '<div class="et-prazo">'+isoToDisplay(et.ini_iso||'')+(et.fim_iso?' → '+isoToDisplay(et.fim_iso):'')+'</div>' : ''))
-      + (et.historico ? '<div class="et-lock">🔒 Motivo registrado em '+et.historico.tsStr+' por '+esc(et.historico.servidor)+'</div>' : '')
+      + (et.historico && et.status === 'ok' ? '<div class="et-lock">🔒 Motivo registrado em '+et.historico.tsStr+' por '+esc(et.historico.servidor)+'</div>' : '')
       + '</div>'
       + (isAtual
           ? '<div style="display:flex;flex-direction:column;gap:6px;align-self:center;">'
@@ -1381,51 +1459,67 @@ function editarEmailProcAtivo_() {
   var p = PROC_ATI;
   if (!p) return;
   var atual = p.emailR || '';
-  var novo = prompt('E-mail do setor requisitante\nProcesso: ' + p.nome + '\nAtual: ' + (atual || 'não cadastrado'), atual);
-  if (novo === null) return;
-  novo = novo.trim();
-  if (novo && novo.indexOf('@') < 0) { toast('E-mail inválido.', 'err'); return; }
-  google.script.run
-    .withSuccessHandler(function(res) {
-      if (res.ok) {
-        p.emailR = novo;
-        var temEmail = novo && novo.indexOf('@') > 0;
-        document.getElementById('btn-email-proc-label').textContent = temEmail ? 'Editar e-mail do requisitante: ' + novo : 'Adicionar e-mail do requisitante';
-        document.getElementById('btn-email-proc').style.color = temEmail ? 'var(--green)' : 'var(--amber)';
-        toast(novo ? '✓ E-mail salvo!' : '✓ E-mail removido.', 'ok');
-      } else { toast('Erro: ' + (res.erro || ''), 'err'); }
-    })
-    .withFailureHandler(function(e) { toast('Erro: ' + (e.message || e), 'err'); })
-    .salvarEmailProcesso(p.id, novo);
+  dialogoCampo_({
+    titulo: atual ? 'Editar e-mail do requisitante' : 'Adicionar e-mail do requisitante',
+    mensagem: 'Processo: ' + p.nome + '\nDeixe em branco para remover o e-mail cadastrado.',
+    valor: atual,
+    tipo: 'email',
+    placeholder: 'setor@cp2.g12.br',
+    ok: 'Salvar'
+  }, function(novo) {
+    if (novo && novo.indexOf('@') < 0) { toast('E-mail inválido.', 'err'); return; }
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (res.ok) {
+          p.emailR = novo;
+          var temEmail = novo && novo.indexOf('@') > 0;
+          document.getElementById('btn-email-proc-label').textContent = temEmail ? 'Editar e-mail do requisitante: ' + novo : 'Adicionar e-mail do requisitante';
+          document.getElementById('btn-email-proc').style.color = temEmail ? 'var(--green)' : 'var(--amber)';
+          toast(novo ? '✓ E-mail salvo!' : '✓ E-mail removido.', 'ok');
+        } else { toast('Erro: ' + (res.erro || ''), 'err'); }
+      })
+      .withFailureHandler(function(e) { toast('Erro: ' + (e.message || e), 'err'); })
+      .salvarEmailProcesso(p.id, novo);
+  });
 }
 
 function regredirEtapaAtual(etIdx) {
   var p = PROC_ATI;
   var et = p && p.etapas[etIdx];
   if (!p || !et) return;
-  var motivo = prompt('Explique por que esta etapa precisa voltar.\nEx.: TCU solicitou refazer a pesquisa de preços.');
-  if (motivo === null) return;
-  motivo = motivo.trim();
-  if (motivo.length < 8) {
-    toast('Informe uma justificativa um pouco mais completa.', 'err');
-    return;
-  }
-  if (!confirm('Confirmar retorno para a etapa anterior? A etapa atual voltará para "Não iniciada" e a anterior ficará "Em andamento".')) return;
-
-  google.script.run
-    .withSuccessHandler(function(res) {
-      if (res && res.ok) {
-        toast('↩ Etapa anterior reaberta.', 'ok');
-        fecharProc();
-        HIST_CARREGADO = false;
-        CAP_CARREGADO = false;
-        setTimeout(carregarDados, 500);
-      } else {
-        toast('Erro: ' + (res && res.erro ? res.erro : 'Não foi possível regredir.'), 'err');
-      }
-    })
-    .withFailureHandler(function(e) { toast('Erro: ' + (e.message || e), 'err'); })
-    .regredirEtapa({ processoId: p.id, linhaEtapaAtual: et.linha, etapaAtual: et.nome, servidor: SERVIDOR, motivo: motivo });
+  dialogoCampo_({
+    titulo: 'Voltar etapa',
+    mensagem: 'Explique por que esta etapa precisa voltar.\nEx.: TCU solicitou refazer a pesquisa de preços.',
+    placeholder: 'Descreva o motivo da regressão...',
+    textarea: true,
+    ok: 'Continuar'
+  }, function(motivo) {
+    if (motivo.length < 8) {
+      toast('Informe uma justificativa um pouco mais completa.', 'err');
+      return;
+    }
+    dialogoConfirmar_(
+      'Confirmar retorno',
+      'A etapa atual voltará para "Não iniciada" e a etapa anterior ficará "Em andamento".',
+      function() {
+        google.script.run
+          .withSuccessHandler(function(res) {
+            if (res && res.ok) {
+              toast('↩ Etapa anterior reaberta.', 'ok');
+              fecharProc();
+              HIST_CARREGADO = false;
+              CAP_CARREGADO = false;
+              setTimeout(carregarDados, 500);
+            } else {
+              toast('Erro: ' + (res && res.erro ? res.erro : 'Não foi possível regredir.'), 'err');
+            }
+          })
+          .withFailureHandler(function(e) { toast('Erro: ' + (e.message || e), 'err'); })
+          .regredirEtapa({ processoId: p.id, linhaEtapaAtual: et.linha, etapaAtual: et.nome, servidor: SERVIDOR, motivo: motivo });
+      },
+      'Voltar etapa'
+    );
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1527,7 +1621,7 @@ function renderStep() {
     var bHTML = '';
     if (diasAtraso > 0) {
       bHTML = '<div class="step-title">⚠ Atraso detectado</div>'
-        + '<div class="step-desc">Esta etapa foi concluída com atraso. O motivo é <b>obrigatório</b> e será registrado permanentemente no histórico — não pode ser apagado depois.</div>'
+        + '<div class="step-desc">Esta etapa foi concluída com atraso. Informe o motivo de forma objetiva para registro no histórico do processo.</div>'
         + '<div class="box-atraso"><h4>+'+diasAtraso+' dia'+(diasAtraso>1?'s':'')+' de atraso</h4>'
         + '<p>Prazo previsto: '+isoToDisplay(et.fim_iso)+' · Realizado: '+isoToDisplay(dr)+'</p></div>'
         + '<div class="field-label">Motivo do atraso <span class="field-req">*</span></div>'
@@ -1559,7 +1653,7 @@ function renderStep() {
     var mot = CONC.motivo || '';
     body.innerHTML =
       '<div class="step-title">Confirmar conclusão</div>'
-      + '<div class="step-desc">Revise os dados. Esta ação gravará na planilha e o registro não poderá ser apagado do histórico.</div>'
+      + '<div class="step-desc">Revise os dados. Ao confirmar, a etapa será atualizada na planilha e o motivo ficará registrado no histórico.</div>'
       + '<div class="info-card">'
       + '<div class="info-row"><span>Processo</span><span>'+esc(PROC_ATI.id)+'</span></div>'
       + '<div class="info-row"><span>Etapa</span><span>'+esc(et.nome)+'</span></div>'
@@ -1648,7 +1742,7 @@ function renderHistorico() {
   var cont = document.getElementById('tab-historico');
   var comMotivo = HIST.filter(function(h) { return h.motivo; });
   if (!comMotivo.length) {
-    cont.innerHTML = '<div class="empty"><div class="ei">📚</div><p>Nenhum motivo registrado ainda.</p><p style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5;">O histórico acumula automaticamente os motivos de atraso à medida que os servidores concluem etapas via este app. Cada registro fica permanente — não pode ser apagado.</p></div>';
+    cont.innerHTML = '<div class="empty"><div class="ei">📚</div><p>Nenhum motivo registrado ainda.</p><p style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5;">O histórico reúne automaticamente os motivos de atraso informados pelos servidores ao concluir etapas pelo app.</p></div>';
     return;
   }
   var html = '<div style="font-size:12px;color:var(--muted);margin-bottom:12px;font-weight:600;">'
@@ -2012,21 +2106,27 @@ function testarEmailAvisos() {
 
 function executarAvisosAgora() {
   if (!isChefeAtual_()) return;
-  if (!confirm('Enviar agora os avisos reais para todos os destinatários elegíveis?')) return;
-  var btn = document.getElementById('btn-trigger-run');
-  if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
-  google.script.run
-    .withSuccessHandler(function(msg) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Enviar avisos agora'; }
-      toast(msg || 'Rotina executada.', 'ok');
-      var out = document.getElementById('trigger-ok');
-      if (out) { out.style.color = 'var(--green)'; out.textContent = '✓ ' + (msg || 'Rotina executada.'); }
-    })
-    .withFailureHandler(function(e) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Enviar avisos agora'; }
-      toast('Erro ao executar avisos: ' + (e.message || e), 'err');
-    })
-    .enviarAvisosPrazo();
+  dialogoConfirmar_(
+    'Enviar avisos agora',
+    'Os avisos reais serão enviados para todos os destinatários elegíveis conforme as regras atuais.',
+    function() {
+      var btn = document.getElementById('btn-trigger-run');
+      if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+      google.script.run
+        .withSuccessHandler(function(msg) {
+          if (btn) { btn.disabled = false; btn.textContent = 'Enviar avisos agora'; }
+          toast(msg || 'Rotina executada.', 'ok');
+          var out = document.getElementById('trigger-ok');
+          if (out) { out.style.color = 'var(--green)'; out.textContent = '✓ ' + (msg || 'Rotina executada.'); }
+        })
+        .withFailureHandler(function(e) {
+          if (btn) { btn.disabled = false; btn.textContent = 'Enviar avisos agora'; }
+          toast('Erro ao executar avisos: ' + (e.message || e), 'err');
+        })
+        .enviarAvisosPrazo();
+    },
+    'Enviar'
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -2399,11 +2499,11 @@ function renderCapacidade_() {
         : '<span style="font-size:10px;font-weight:700;background:#f1f5f9;color:var(--muted);padding:2px 7px;border-radius:8px;white-space:nowrap;">Não iniciado</span>';
       var row = '<div class="cap-proc-row" style="'+(!ativo?'opacity:.78;':'')+'">'
         + '<div class="cap-proc-info">'
-        + '<div class="cap-proc-nome" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'
+        + '<div class="cap-proc-tags">'
         + servTagHtml_(r.servidor)
-        + '<span>' + esc(r.objeto) + '</span>'
         + badgeStatus
         + '</div>'
+        + '<div class="cap-proc-nome">' + esc(r.objeto) + '</div>'
         + '</div>'
         + '<span class="cap-pts-badge" style="'+(!ativo?'background:#f1f5f9;color:var(--muted);':'')+'">' + r.total + '<span style="font-size:10px;font-weight:400"> pts</span></span>';
       if (podeEditar) {
@@ -2426,36 +2526,49 @@ function editarEmailProcesso_(btn) {
   var r   = CAP_REG[idx];
   if (!r || !r.pid) { toast('Processo sem ID.', 'err'); return; }
   var atual = r.emailR || '';
-  var novo = prompt('E-mail do setor requisitante\nProcesso: ' + r.objeto + '\nAtual: ' + (atual || 'não cadastrado'), atual);
-  if (novo === null) return; // cancelou
-  novo = novo.trim();
-  if (novo && novo.indexOf('@') < 0) { toast('E-mail inválido.', 'err'); return; }
-  google.script.run
-    .withSuccessHandler(function(res) {
-      if (res.ok) {
-        r.emailR = novo;
-        toast(novo ? '✓ E-mail salvo!' : '✓ E-mail removido.', 'ok');
-        CAP_CARREGADO = false; carregarCapacidade_();
-      } else { toast('Erro: ' + (res.erro || ''), 'err'); }
-    })
-    .withFailureHandler(function(e) { toast('Erro: ' + (e.message || e), 'err'); })
-    .salvarEmailProcesso(r.pid, novo);
+  dialogoCampo_({
+    titulo: 'E-mail do requisitante',
+    mensagem: 'Processo: ' + r.objeto + '\nDeixe em branco para remover.',
+    valor: atual,
+    tipo: 'email',
+    placeholder: 'setor@cp2.g12.br',
+    ok: 'Salvar'
+  }, function(novo) {
+    if (novo && novo.indexOf('@') < 0) { toast('E-mail inválido.', 'err'); return; }
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (res.ok) {
+          r.emailR = novo;
+          toast(novo ? '✓ E-mail salvo!' : '✓ E-mail removido.', 'ok');
+          CAP_CARREGADO = false; carregarCapacidade_();
+        } else { toast('Erro: ' + (res.erro || ''), 'err'); }
+      })
+      .withFailureHandler(function(e) { toast('Erro: ' + (e.message || e), 'err'); })
+      .salvarEmailProcesso(r.pid, novo);
+  });
 }
 
 // ── Editar "Outros (fixo)" de um servidor ───────────────────────────────────
 function editarOutros_(btn) {
   var linha = parseInt(btn.dataset.linha, 10); var atual = parseFloat(btn.dataset.outros); var col = parseInt(btn.dataset.col, 10); var servidor = btn.dataset.serv;
-  var val = prompt('Outros (fixo) de ' + servidor + '\nCargas fixas: chefia=2, GT=1, capacitação=1\nValor atual: ' + atual, atual);
-  if (val === null) return;
-  var num = parseFloat(val);
-  if (isNaN(num)) { toast('Valor inválido.', 'err'); return; }
-  google.script.run
-    .withSuccessHandler(function(r) {
-      if (r.ok) { toast('Outros atualizado!', 'ok'); CAP_CARREGADO = false; carregarCapacidade_(); }
-      else toast('Erro: '+(r.erro||''), 'err');
-    })
-    .withFailureHandler(function(e){ toast('Erro: '+(e.message||e),'err'); })
-    .salvarOutrosCap({ linha: isNaN(linha) ? 0 : linha, valor: num, col: isNaN(col) ? 2 : col, servidor: servidor, fase: CAP_PHASE });
+  dialogoCampo_({
+    titulo: 'Outros pontos',
+    mensagem: 'Servidor: ' + servidor + '\nCargas fixas: chefia=2, GT=1, capacitação=1.',
+    valor: atual,
+    tipo: 'number',
+    placeholder: '0',
+    ok: 'Salvar'
+  }, function(val) {
+    var num = parseFloat(val);
+    if (isNaN(num)) { toast('Valor inválido.', 'err'); return; }
+    google.script.run
+      .withSuccessHandler(function(r) {
+        if (r.ok) { toast('Outros atualizado!', 'ok'); CAP_CARREGADO = false; carregarCapacidade_(); }
+        else toast('Erro: '+(r.erro||''), 'err');
+      })
+      .withFailureHandler(function(e){ toast('Erro: '+(e.message||e),'err'); })
+      .salvarOutrosCap({ linha: isNaN(linha) ? 0 : linha, valor: num, col: isNaN(col) ? 2 : col, servidor: servidor, fase: CAP_PHASE });
+  });
 }
 
 // ── Pontuação guiada ─────────────────────────────────────────────────────────
@@ -2633,20 +2746,26 @@ function renderEmailsConfig_(emails) {
 function editarEmail_(btn) {
   var servidor = btn.dataset.serv;
   var atual = (EMAILS_CACHE && EMAILS_CACHE[servidor]) || '';
-  var novo = prompt('E-mail de ' + servidor + ':', atual);
-  if (novo === null) return;
-  novo = novo.trim();
-  if (novo && novo.indexOf('@') < 0) { toast('E-mail inválido.', 'err'); return; }
-  google.script.run
-    .withSuccessHandler(function(r) {
-      if (r.ok) {
-        if (EMAILS_CACHE) EMAILS_CACHE[servidor] = novo;
-        renderEmailsConfig_(EMAILS_CACHE);
-        toast('✓ E-mail atualizado!', 'ok');
-      } else { toast('Erro: ' + (r.erro||''), 'err'); }
-    })
-    .withFailureHandler(function(e){ toast('Erro: ' + (e.message||e), 'err'); })
-    .salvarEmail(servidor, novo);
+  dialogoCampo_({
+    titulo: 'E-mail do servidor',
+    mensagem: 'Servidor: ' + servidor + '\nDeixe em branco para remover.',
+    valor: atual,
+    tipo: 'email',
+    placeholder: 'nome@cp2.g12.br',
+    ok: 'Salvar'
+  }, function(novo) {
+    if (novo && novo.indexOf('@') < 0) { toast('E-mail inválido.', 'err'); return; }
+    google.script.run
+      .withSuccessHandler(function(r) {
+        if (r.ok) {
+          if (EMAILS_CACHE) EMAILS_CACHE[servidor] = novo;
+          renderEmailsConfig_(EMAILS_CACHE);
+          toast('✓ E-mail atualizado!', 'ok');
+        } else { toast('Erro: ' + (r.erro||''), 'err'); }
+      })
+      .withFailureHandler(function(e){ toast('Erro: ' + (e.message||e), 'err'); })
+      .salvarEmail(servidor, novo);
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════════

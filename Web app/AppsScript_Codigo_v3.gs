@@ -1003,30 +1003,31 @@ function novoProcesso() {
     var totalExterno = modPts + sessaoOpt.pts + natExternaOpt.pts + gruposOpt.pts;
     capItems.push({
       pid: pid, objeto: objeto, servidor: respInterno, modalidade: modalidade,
-      fase: 'Interna', ativo: 'Sim', modPts: modPts, natPts: naturezaOpt.pts,
+      fase: 'Interna', ativo: 'Nao', modPts: modPts, natPts: naturezaOpt.pts,
       sessPts: 0, outrosPts: irpPts, total: totalInterno,
       obs: naturezaOpt.label + '; ' + irpLabel + '. Externo: ' + respExterno,
-      divisao: 'Pregao: fase interna ativa ate conclusao da etapa 7.'
+      divisao: 'Pregao: fase interna preparada; passa a contar quando o processo iniciar.'
     });
     capItems.push({
       pid: pid, objeto: objeto, servidor: respExterno, modalidade: modalidade,
       fase: 'Externa', ativo: 'Nao', modPts: modPts, natPts: natExternaOpt.pts,
       sessPts: sessaoOpt.pts, outrosPts: gruposOpt.pts, total: totalExterno,
       obs: sessaoOpt.label + '; ' + natExternaOpt.label + '; ' + gruposOpt.label + '. Interno: ' + respInterno,
-      divisao: 'Pregao: esta linha ativa quando a etapa 7 for concluida.'
+      divisao: 'Pregao: fase externa preparada; passa a contar quando a fase externa assumir.'
     });
   } else {
     // Modalidade unica: tudo numa linha so (nao ha segregacao interna/externa)
     var totalUnico = modPts + naturezaOpt.pts + irpPts + sessaoOpt.pts;
     capItems.push({
       pid: pid, objeto: objeto, servidor: respInterno, modalidade: modalidade,
-      fase: 'Unica', ativo: 'Sim', modPts: modPts, natPts: naturezaOpt.pts,
+      fase: 'Unica', ativo: 'Nao', modPts: modPts, natPts: naturezaOpt.pts,
       sessPts: sessaoOpt.pts, outrosPts: irpPts, total: totalUnico,
       obs: 'Responsavel externo: N/A. ' + naturezaOpt.label + '; ' + irpLabel + '; ' + sessaoOpt.label + '.',
-      divisao: 'Modalidade sem segundo responsavel separado.'
+      divisao: 'Modalidade sem segundo responsavel separado; passa a contar quando o processo iniciar.'
     });
   }
   var capRows = capAppendRows_(capItems);
+  sincronizarCapacidade(true);
 
   SpreadsheetApp.flush(); // confirma todas as escritas antes de seguir
 
@@ -1257,14 +1258,14 @@ function capAtualizarFormulasResumo_(wsCap, info) {
     }
   }
 
-  // O painel publico mostra a capilaridade da fase interna; a fase externa
-  // fica como controle operacional separado na propria planilha.
+  // A coluna Ativo garante que apenas a fase corrente conte. Por isso o resumo
+  // soma todas as cargas ativas, internas ou externas, sem dupla contagem.
   resumoRows.forEach(function(r) {
-    wsCap.getRange(r, 3).setFormula('=SUMIFS(' + totalRange + ',' + servidorRange + ',$A' + r + ',' + ativoRange + ',"Sim",' + faseRange + ',"Fase Interna")');
+    wsCap.getRange(r, 3).setFormula('=SUMIFS(' + totalRange + ',' + servidorRange + ',$A' + r + ',' + ativoRange + ',"Sim")');
   });
   if (!resumoRows.length) {
     for (var r = 5; r <= 8; r++) {
-      wsCap.getRange(r, 3).setFormula('=SUMIFS(' + totalRange + ',' + servidorRange + ',$A' + r + ',' + ativoRange + ',"Sim",' + faseRange + ',"Fase Interna")');
+      wsCap.getRange(r, 3).setFormula('=SUMIFS(' + totalRange + ',' + servidorRange + ',$A' + r + ',' + ativoRange + ',"Sim")');
     }
   }
   return true;
@@ -1650,10 +1651,10 @@ function capBuildCapacidadeAtual_(processos) {
 // sinalizadores que controlam a coluna Ativo na aba Capacidade.
 //
 // Campos do statusObj:
-//   etapa1Ativa    — etapa 1 (Designação) está Em andamento ou Concluída
-//                    → gatilho para ativar a Fase Interna automaticamente
-//   etapa7Concluida — etapa 7 (Envio ao SEL/SEPMA) está Concluída
-//                    → gatilho para ativar Fase Externa e desativar Interna
+//   faseCorrente   — fase real do processo pelo andamento das etapas:
+//                    int antes da transição; ext depois que a externa assumir
+//   iniciadoSEL    — ao menos uma etapa do SEL já foi iniciada/concluída
+//   etapa1Ativa / etapa7Concluida — mantidos por compatibilidade com rotinas antigas
 //   concluidoSEL   — todas as etapas 1–8 estão Concluídas ou Não se aplica
 //                    → desativa todas as linhas do processo na Capacidade
 //   temEtapaSEL    — flag de sanidade: processo tem pelo menos uma etapa
@@ -1672,34 +1673,61 @@ function capBuildEtapasStatus_() {
   var h = dados[hIdx].map(function(x) { return String(x || '').trim(); });
   var cPid  = capFindCol_(h, ['ProcessoID']);
   var cOrd  = capFindCol_(h, ['Ord.']);
+  var cEtapa = capFindCol_(h, ['Etapa']);
+  var cFase = capFindCol_(h, ['Fase']);
   var cStat = capFindCol_(h, ['StatusEtapa ◄ EDITAR', 'StatusEtapa EDITAR', 'StatusEtapa']);
+  if (cPid < 0 || cStat < 0) return status;
   for (var r = hIdx + 1; r < dados.length; r++) {
     var pid = String(dados[r][cPid] || '').trim();
     if (!pid) continue;
     var ord = parseInt(dados[r][cOrd], 10);
+    var nomeEtapa = cEtapa >= 0 ? String(dados[r][cEtapa] || '').trim() : '';
+    var faseTxt = cFase >= 0 ? String(dados[r][cFase] || '').trim() : '';
+    var faseNorm = capNorm_(faseTxt);
+    var nomeNorm = capNorm_(nomeEtapa);
+    if (faseNorm.indexOf('CONTRAT') >= 0 || nomeNorm.indexOf('ASSINATURA') >= 0 || nomeNorm.indexOf('ARP') >= 0) continue;
     var st  = normalizeStatus(String(dados[r][cStat] || '').trim());
+    var faseKind = faseNorm.indexOf('EXTERNA') >= 0 ? 'ext' : 'int';
     if (!status[pid]) status[pid] = {
       etapa1Ativa:     false,   // etapa 1 em andamento ou concluída
       etapa7Concluida: false,   // etapa 7 concluída → vira fase externa
       concluidoSEL:    true,    // todo processo concluído até prova em contrário
-      temEtapaSEL:     false
+      temEtapaSEL:     false,
+      iniciadoSEL:     false,
+      faseCorrente:    '',
+      _ativa:          '',
+      _primeiraPend:   '',
+      _primeiraPendPosOk: '',
+      _ok:             0
     };
     // Etapa 1 — Designação da equipe: ativa quando Em andamento ou Concluída
     if (ord === 1 && (st === 'andamento' || st === 'ok')) {
       status[pid].etapa1Ativa = true;
     }
-    // Etapa 7 — Envio ao SEL/SEPMA: ativa fase externa quando Concluída
-    if (ord === 7 && st === 'ok') {
+    if (st === 'ok') status[pid]._ok++;
+    // Compatibilidade legada: fase externa começa quando todas as internas acabam.
+    if (faseKind === 'ext' && (status[pid]._ok > 0 || st !== 'planejamento')) {
       status[pid].etapa7Concluida = true;
     }
     // Qualquer etapa SEL (1-8) não concluída → processo ainda em andamento
-    if (ord >= 1 && ord <= 8) {
+    if (!isNaN(ord)) {
       status[pid].temEtapaSEL = true;
       if (st !== 'ok' && st !== 'naoaplica') status[pid].concluidoSEL = false;
+      if (st === 'ok' || ['andamento','aguardando','paralisado','atrasado'].indexOf(st) >= 0) status[pid].iniciadoSEL = true;
+      if (['andamento','aguardando','paralisado','atrasado'].indexOf(st) >= 0 && !status[pid]._ativa) status[pid]._ativa = faseKind;
+      if (st === 'planejamento' || st === 'pendente') {
+        if (!status[pid]._primeiraPend) status[pid]._primeiraPend = faseKind;
+        if (status[pid]._ok > 0 && !status[pid]._primeiraPendPosOk) status[pid]._primeiraPendPosOk = faseKind;
+      }
     }
   }
   Object.keys(status).forEach(function(pid) {
     if (!status[pid].temEtapaSEL) status[pid].concluidoSEL = false;
+    status[pid].faseCorrente = status[pid]._ativa
+      || status[pid]._primeiraPendPosOk
+      || status[pid]._primeiraPend
+      || '';
+    status[pid].etapa7Concluida = status[pid].faseCorrente === 'ext';
   });
   return status;
 }
@@ -1902,18 +1930,16 @@ function aplicarMigracaoCapacidade() {
 //     → Ativo = "Não" em todas as linhas do processo
 //
 //   Regra 2 — Fase Interna:
-//     → Ativo = "Sim"  se etapa 1 (Designação) está Em andamento ou Concluída
-//               E etapa 7 ainda não foi concluída
-//     → Ativo = "Não"  assim que etapa 7 (Envio ao SEL) for Concluída
-//       (processo migra para fase externa — o servidor interno é liberado)
+//     → Ativo = "Sim" quando a fase corrente real é interna e o processo iniciou
+//     → Ativo = "Não" quando a fase externa assumir ou o processo concluir
 //
 //   Regra 3 — Fase Externa:
-//     → Ativo = "Sim"  quando etapa 7 (Envio ao SEL/SEPMA) for Concluída
-//     → Ativo = "Não"  enquanto etapa 7 ainda não foi concluída
+//     → Ativo = "Sim" quando a fase corrente real é externa
+//     → Ativo = "Não" enquanto a fase interna ainda estiver corrente
 //
 //   Regra 4 — Fase Única (Dispensa/Contratação Direta):
-//     → Ativo = "Sim"  quando etapa 1 estiver Em andamento ou Concluída
-//     → Ativo = "Não"  quando processo estiver concluído
+//     → Ativo = "Sim" quando a fase corrente real for interna e o processo tiver iniciado
+//     → Ativo = "Não" quando processo estiver concluído
 //
 //   Linhas com Ativo = "REVISAR" são preservadas — não são tocadas.
 //
@@ -1973,16 +1999,16 @@ function sincronizarCapacidade(silencioso) {
       novoAtivo = 'Nao';
 
     } else if (fase.indexOf('UNICA') >= 0) {
-      // Regra 4: fase única (Dispensa/CD sem segregação) → ativa com etapa 1
-      novoAtivo = st.etapa1Ativa ? 'Sim' : 'Nao';
+      // Regra 4: fase única (Dispensa/CD sem segregação) → ativa depois que o processo inicia
+      novoAtivo = (st.faseCorrente === 'int' && st.iniciadoSEL) ? 'Sim' : 'Nao';
 
     } else if (fase.indexOf('INTERNA') >= 0) {
-      // Regra 2: fase interna ativa enquanto etapa 1 iniciou e etapa 7 não concluiu
-      novoAtivo = (st.etapa1Ativa && !st.etapa7Concluida) ? 'Sim' : 'Nao';
+      // Regra 2: fase interna ativa quando a fase corrente real ainda é interna
+      novoAtivo = (st.faseCorrente === 'int' && st.iniciadoSEL) ? 'Sim' : 'Nao';
 
     } else if (fase.indexOf('EXTERNA') >= 0) {
-      // Regra 3: fase externa ativa somente após etapa 7 concluída
-      novoAtivo = st.etapa7Concluida ? 'Sim' : 'Nao';
+      // Regra 3: fase externa ativa quando a fase corrente real é externa
+      novoAtivo = st.faseCorrente === 'ext' ? 'Sim' : 'Nao';
     }
 
     // Normaliza o valor atual para comparação sem sensibilidade a acento
@@ -1995,50 +2021,8 @@ function sincronizarCapacidade(silencioso) {
     }
   }
 
-  // ── Transferência de pontuação fase Interna → Externa (Pregão) ──────────
-  // Quando a etapa 7 é concluída, a linha Interna passa a Ativo=Nao e a linha
-  // Externa passa a Ativo=Sim. Nesse momento, os pontos de Natureza/IRP da fase
-  // interna devem ser zerados (responsável interno liberado) e os pontos da fase
-  // externa devem refletir o que foi calculado no wizard.
-  //
-  // Esta rotina percorre cada PID de Pregão onde etapa7Concluida=true e garante:
-  //   • Linha Interna  → Total recalculado sem Nat/IRP (só modPts)
-  //   • Linha Externa  → Total recalculado com sess/nat/grupos (já estava correto)
-  //   • SUMIFS da planilha recalcula automaticamente via Ativo=Sim/Nao
-  if (info.colPid >= 0 && info.colFase >= 0 && info.colAtivo >= 0 &&
-      info.colModPts >= 0 && info.colNatPts >= 0 && info.colSessPts >= 0 &&
-      info.colOutrosPts >= 0 && info.colTotal >= 0) {
-
-    var valuesAtual = wsCap.getRange(
-      info.dataStartRow, 1,
-      lastRow - info.dataStartRow + 1,
-      info.header.length
-    ).getValues();
-
-    for (var j = 0; j < valuesAtual.length; j++) {
-      var jPid   = String(valuesAtual[j][info.colPid]  || '').trim();
-      var jFase  = capNorm_(valuesAtual[j][info.colFase]);
-      if (!jPid || !etapas[jPid]) continue;
-      if (!etapas[jPid].etapa7Concluida) continue;         // só age quando etapa 7 concluída
-      if (capNorm_(String(valuesAtual[j][info.colAtivo] || '')) === 'REVISAR') continue;
-
-      // Linha Interna de Pregão após conclusão da etapa 7:
-      // zera Nat e Outros (IRP) — responsável interno foi liberado
-      if (jFase.indexOf('INTERNA') >= 0) {
-        var modPtsAtual  = Number(valuesAtual[j][info.colModPts])   || 0;
-        var natPtsAtual  = Number(valuesAtual[j][info.colNatPts])   || 0;
-        var outrosPtsAt  = Number(valuesAtual[j][info.colOutrosPts]) || 0;
-        // Só altera se ainda tem pontos que deveriam ser zerados
-        if (natPtsAtual !== 0 || outrosPtsAt !== 0) {
-          var novoTotal = modPtsAtual; // fase interna encerrada: só conta modalidade base
-          wsCap.getRange(info.dataStartRow + j, info.colNatPts   + 1).setValue(0);
-          wsCap.getRange(info.dataStartRow + j, info.colOutrosPts + 1).setValue(0);
-          wsCap.getRange(info.dataStartRow + j, info.colTotal     + 1).setValue(novoTotal);
-          changed++;
-        }
-      }
-    }
-  }
+  // Não zera pontuações de fases encerradas: a coluna Ativo já controla a carga.
+  // Preservar os pontos permite regressão de fase sem perda da pontuação original.
 
   invalidarCache();
   if (!silencioso) {
@@ -2046,10 +2030,9 @@ function sincronizarCapacidade(silencioso) {
       'Capacidade sincronizada!\n\n' +
       'Linhas atualizadas: ' + changed + '\n\n' +
       'Regras aplicadas:\n' +
-      '  • Fase Interna → Sim quando etapa 1 (Designação) iniciada\n' +
-      '  • Fase Interna → Não quando etapa 7 (Envio ao SEL) concluída\n' +
-      '  • Fase Externa → Sim quando etapa 7 (Envio ao SEL) concluída\n' +
-      '  • Fase Interna concluída → pontos de Natureza/IRP zerados (responsável liberado)\n' +
+      '  • Fase Interna → Sim quando a fase corrente real for interna e o processo tiver iniciado\n' +
+      '  • Fase Externa → Sim quando a fase corrente real for externa\n' +
+      '  • Pontuações são preservadas; Ativo controla se contam ou não\n' +
       '  • Concluído    → Não em todas as linhas'
     );
   }
@@ -2542,6 +2525,7 @@ function getCapacidade() {
         if (!usandoConfigServidores) servidoresResumo[keyResumo] = true;
         if (!usandoConfigServidores || servidoresResumo[keyResumo]) {
           outrosPts += parseNumCap_(dados[sr][1]);
+          outrosPts += parseNumCap_(dados[sr][10]);
         }
       }
     }
@@ -2559,8 +2543,8 @@ function getCapacidade() {
         var servCap = iServ >= 0 ? String(rowCap[iServ] || '').trim() : String(rowCap[0] || '').trim();
         if (!servCap) continue;
         if (iAtivo >= 0 && !isSimCap_(rowCap[iAtivo])) continue;
-        var faseCap = iFase >= 0 ? String(rowCap[iFase] || '').toLowerCase() : '';
-        if (faseCap.indexOf('ext') >= 0) continue;
+        // Soma qualquer fase ativa. A coluna Ativo já evita dupla contagem entre
+        // fase interna e externa de um mesmo processo.
         processosPts += iTotal >= 0 ? parseNumCap_(rowCap[iTotal]) : 0;
         if (usarServidoresDoRegistro) servidoresResumo[capNorm_(servCap)] = true;
       }
@@ -2570,13 +2554,12 @@ function getCapacidade() {
     var totalCalc = processosPts + outrosPts;
     var totalOficial = parseNumCap_(rowTotais[3]);
     var tetoOficial = parseNumCap_(rowTotais[4]);
-    var totalPts = totalOficial > 0 ? totalOficial : totalCalc;
+    var totalPts = (regHdr >= 0 || sumHdr >= 0) ? totalCalc : totalOficial;
     var tetoPts  = tetoOficial > 0 ? tetoOficial : (qtdServidores ? qtdServidores * 10 : 40);
     var pct      = tetoPts > 0 ? totalPts / tetoPts : 0;
 
-    // O percentual oficial da planilha prevalece quando existir.
-    var pctPlanilha = parsePctDecimalCap_(rowStatus[1]);
-    if (!isNaN(pctPlanilha) && pctPlanilha > 0) pct = pctPlanilha;
+    // O percentual é calculado no servidor para refletir imediatamente todas
+    // as fases ativas, mesmo antes das fórmulas da planilha recalcularem.
 
     // col C (índice 2) = nível textual
     var nivel = String(rowStatus[2] || '').trim();
