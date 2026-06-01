@@ -1,5 +1,5 @@
 # Plano de Trabalho — Sistema de Contratações CPII
-> Atualizado em: 31/05/2026 — AppSEL com trigger 10h30, novas regras de e-mail e documentação para GitHub
+> Atualizado em: 01/06/2026 — painel público somente leitura, KPI de capacidade interna, locks de escrita e leitura do AppSEL sem efeitos colaterais
 
 ---
 
@@ -424,3 +424,56 @@ Diagnóstico inicial substituído pela correção final abaixo: a Capacidade ago
 - `renderHistorico` (AppSEL_index.html): `.hist-proc` passa a exibir `h.objeto` (fallback pid); quando há SUAP, vira `<a target=_blank>` com seta ↗. ProcessoID não aparece mais.
 - **Truncamento recorrente:** Edit cortou AppSEL_Codigo.gs (→2371L) E AppSEL_index.html (cópia local já estava em 2498L vs git 2794L). Reconstruídos do git HEAD via Python + shutil.copyfile e revalidados. Cuidado ao escapar unicode em string JS dentro de Python (gerou `↗` literal; corrigido para ↗).
 - Final: AppSEL_Codigo.gs 2396L, AppSEL_index.html 2799L (termina em </html>), node --check ✅.
+
+---
+
+## 🔒 SESSÃO 01/06/2026 — Sustentabilidade: painel somente leitura, capacidade interna e locks
+
+**Pedido do Samuel:** endurecer o projeto para longo prazo, garantindo que o painel público seja apenas consulta, que toda escrita fique no AppSEL, que o KPI público de Capacidade não infle com fase externa, que existam travas contra edição simultânea e que leituras do AppSEL não façam manutenção automática silenciosa.
+
+**1) Painel público (`AppsScript_Codigo_v3.gs`) agora é somente leitura:**
+- Adicionada a flag `PAINEL_SOMENTE_LEITURA = true`.
+- Menu da planilha vinculado ao painel foi reduzido para: abrir painel, atualizar cache e validar integridade. Itens de cadastro, sincronização, conclusão, migração e triggers de edição foram removidos do menu.
+- Funções de escrita legadas (`novoProcesso`, `sincronizarCapacidade`, `concluirProcesso`, migrações, preenchimento de datas, triggers de edição e `onEdit/onEditAtraso`) passam a bloquear a ação com mensagem orientando uso do AppSEL.
+- O painel continua podendo limpar cache (`invalidarCache`) e ler dados (`getDados`, `getCapacidade`).
+
+**2) KPI público de Capacidade corrigido para refletir só fase interna:**
+- `getCapacidade()` passa a somar apenas linhas ativas da Fase Interna e os pontos fixos internos.
+- Fase Externa segue existindo e sendo planejada no AppSEL/Capacidade, mas não infla o indicador mostrado ao requisitante.
+- O nível textual (`Disponível`, `Limitada`, `Máxima`) agora é calculado pelo percentual interno, evitando divergência entre cor, percentual e mensagem.
+- Retorno inclui `fase: 'interna'` para deixar explícito o contrato do KPI.
+
+**3) Travas contra edição simultânea no AppSEL (`AppSEL_Codigo.gs`):**
+- Criados helpers `_withAppLock_()` e `_withAppLockResult_()` usando `LockService.getScriptLock().tryLock(30000)`.
+- Operações de escrita do AppSEL passaram a usar lock: iniciar processos, concluir etapa, cadastrar processo, migrar nomes de etapas, salvar e-mail de requisitante/servidor, trocar servidor, atualizar status, regredir etapa, salvar pontuação/outros, salvar equipe, instalar trigger e atribuir responsáveis.
+- Se outra alteração estiver em andamento, o app retorna erro amigável: aguardar alguns segundos e tentar novamente.
+
+**4) Configuração menos colada ao código:**
+- `SS_ID`, e-mail fallback da chefia e e-mails fallback de servidores continuam como fallback para não quebrar a versão atual.
+- O AppSEL passa a procurar primeiro no `PropertiesService`: `SEL_SS_ID`, `SEL_CHEFIA_EMAIL` e `email_fallback_<servidor_normalizado>`.
+- O painel público passa a aceitar `PAINEL_WEBAPP_URL` via `PropertiesService`, com URL antiga apenas como fallback.
+
+**5) Leitura do AppSEL sem efeitos colaterais:**
+- `getEtapasParaApp()` deixou de corrigir blocos, marcar contratuais N/A e sincronizar Capacidade durante simples carregamento.
+- `getCapacidadeApp()` deixou de executar correções/sincronização antes de retornar dados.
+- A regra institucional foi preservada: assinatura de contrato/Ata (ARP) continua fora das atribuições do setor de licitações; novos cadastros já gravam essa etapa como `Não se aplica`, a migração manual `migrarNomesEtapas()` continua disponível, e a leitura ainda trata etapa contratual como N/A para exibição.
+
+**Publicação necessária:**
+- Republicar `AppSEL_Codigo.gs`.
+- Atualizar o script vinculado do painel com `AppsScript_Codigo_v3.gs` e recarregar a planilha para o menu novo.
+- No AppSEL, testar: abrir Etapas, abrir Capacidade, concluir uma etapa, salvar pontuação e reinstalar trigger.
+- No Painel, testar: abrir painel, atualizar cache e confirmar que o KPI de Capacidade mostra apenas a ocupação interna.
+
+---
+
+## SESSÃO 01/06/2026 — Texto do banner de etapas vencidas no filtro por servidor
+
+**Pedido do Samuel:** no filtro individual de servidor, deixar claro para quem os avisos automáticos serão enviados, com português brasileiro correto.
+
+**Implementado em `AppSEL_index.html`:**
+- Quando o servidor filtrado não é chefia, o banner informa que os avisos serão enviados à chefia e aos integrantes da equipe de planejamento.
+- Quando o servidor filtrado é chefia, o banner informa que os avisos serão enviados apenas aos integrantes da equipe de planejamento.
+- A frase agora respeita singular e plural: `O aviso automático será enviado...` / `Os avisos automáticos serão enviados...`.
+
+**Publicação necessária:**
+- Republicar o AppSEL para que o novo texto apareça no painel.

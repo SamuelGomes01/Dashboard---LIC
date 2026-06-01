@@ -33,6 +33,47 @@ var AVISO_MINUTO = 30;
 var AVISO_HORA_LABEL = '10h30';
 // ─────────────────────────────────────────────────────────────────────────
 
+// Configuração sustentável:
+// - Se existir no PropertiesService, usa o valor configurado no projeto.
+// - Se não existir, mantém os fallbacks acima para não quebrar a versão atual.
+// Chaves úteis: SEL_SS_ID, SEL_CHEFIA_EMAIL e email_fallback_<servidor_normalizado>.
+function _configProp_(chave, fallback) {
+  try {
+    var val = PropertiesService.getScriptProperties().getProperty(chave);
+    return val !== null && val !== undefined && String(val).trim() !== '' ? val : fallback;
+  } catch(e) {
+    return fallback;
+  }
+}
+
+function _emailServidorFallback_(servidor) {
+  return _configProp_(_propKeyServidor_('email_fallback', servidor), EMAILS_SEL[servidor] || '');
+}
+
+function _chefiaEmailFallback_() {
+  return _configProp_('SEL_CHEFIA_EMAIL', CHEFIA_EMAIL);
+}
+
+function _withAppLock_(acao, fn) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('Sistema ocupado: outra alteração está sendo salva. Aguarde alguns segundos e tente novamente.');
+  }
+  try {
+    return fn();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _withAppLockResult_(acao, fn) {
+  try {
+    return _withAppLock_(acao, fn);
+  } catch(e) {
+    return { ok: false, erro: e.message };
+  }
+}
+
 var ABA_PROC = '🏛 Processos';
 var ABA_ETP  = '🗓 Etapas';
 var ABA_HIST = '__historico_motivos'; // aba oculta, append-only
@@ -306,7 +347,7 @@ function _salvarServidoresConfigSheet_(lista) {
         s.nome,
         s.cor || '#64748b',
         s.isChefe ? 'Sim' : 'Não',
-        props.getProperty('email_' + s.nome) || EMAILS_SEL[s.nome] || ''
+        props.getProperty('email_' + s.nome) || _emailServidorFallback_(s.nome) || ''
       ]);
     });
     sh.clearContents();
@@ -315,7 +356,7 @@ function _salvarServidoresConfigSheet_(lista) {
   } catch(e) {}
 }
 
-function _ss_() { return SpreadsheetApp.openById(SS_ID); }
+function _ss_() { return SpreadsheetApp.openById(_configProp_('SEL_SS_ID', SS_ID)); }
 
 function _setCapacidadeAtivo_(pid, faseTipo, ativo) {
   var shCap = _ss_().getSheetByName('📊 Capacidade');
@@ -453,13 +494,10 @@ function doGet() {
 // Inclui referência ao histórico de motivos para exibir o cadeado no app.
 function getEtapasParaApp() {
   var ss = _ss_();
-  _corrigirProcessoIdsBlocosEtapas_();
-  _marcarEtapasContratuaisNA_();
-  _sincronizarCapacidadeComEtapas_();
 
   // ── Processos ──────────────────────────────────────────────────────────
   var shP  = ss.getSheetByName(ABA_PROC);
-  var lP   = _garantirColunas_(shP, 'ProcessoID', ['Setor Requisitante', 'EmailRequisitante']);
+  var lP   = _lerAba_(shP, 'ProcessoID');
   var hP   = lP.header;
   var iP   = {
     id:    hP.indexOf('ProcessoID'),
@@ -687,7 +725,8 @@ function getEtapasParaApp() {
 // Define D0 para processos da fila, tornando-os ativos na aba Etapas.
 // params: [{pid, d0 (YYYY-MM-DD), servidor, servidorExt}]
 function iniciarProcessos(params) {
-  try {
+  return _withAppLockResult_('iniciar processos', function() {
+    try {
     var ss  = _ss_();
     var shP = ss.getSheetByName(ABA_PROC);
     var shE = ss.getSheetByName(ABA_ETP);
@@ -756,7 +795,8 @@ function iniciarProcessos(params) {
     });
     _sincronizarCapacidadeComEtapas_();
     return { ok: true, iniciados: iniciados };
-  } catch(e) { return { ok: false, erro: e.message }; }
+    } catch(e) { return { ok: false, erro: e.message }; }
+  });
 }
 
 // ── concluirEtapa ─────────────────────────────────────────────────────────
@@ -779,7 +819,8 @@ function _d0DoProcesso_(pid) {
 }
 
 function concluirEtapa(params) {
-  try {
+  return _withAppLockResult_('concluir etapa', function() {
+    try {
     var sh  = _ss_().getSheetByName(ABA_ETP);
     var lEt = _lerAba_(sh, 'ProcessoID');
     var hdr = lEt.header;
@@ -831,6 +872,7 @@ function concluirEtapa(params) {
   } catch(e) {
     return { ok: false, erro: e.message };
   }
+  });
 }
 
 // ── _verificarTransicaoFase_ ──────────────────────────────────────────────
@@ -1044,11 +1086,12 @@ function enviarAvisosPrazo() {
     .map(function(s) { return s.nome; });
   var chefiaEmails = [];
   CHEFES_LISTA.forEach(function(nome) {
-    var em = emailsConfig[nome] || EMAILS_SEL[nome] || '';
+    var em = emailsConfig[nome] || _emailServidorFallback_(nome) || '';
     if (isChefiaEmail(em) && chefiaEmails.indexOf(em) < 0) chefiaEmails.push(em);
   });
-  if (isChefiaEmail(CHEFIA_EMAIL) && chefiaEmails.indexOf(CHEFIA_EMAIL) < 0) {
-    chefiaEmails.push(CHEFIA_EMAIL);
+  var chefiaFallback = _chefiaEmailFallback_();
+  if (isChefiaEmail(chefiaFallback) && chefiaEmails.indexOf(chefiaFallback) < 0) {
+    chefiaEmails.push(chefiaFallback);
   }
 
   function isChefiaEmail(e) { return e && e.indexOf('@') > 0 && !e.startsWith('COLE'); }
@@ -1182,7 +1225,7 @@ function enviarAvisosPrazo() {
       : (responsaveis.length === 1 ? 'Cujo responsável é ' + responsaveisHtml + '.' : 'Não há responsável cadastrado para esta etapa.');
 
     var respEmailNome = respAtual;
-    if ((!respEmailNome || !(emailsConfig[respEmailNome] || EMAILS_SEL[respEmailNome])) && servidorFase) {
+    if ((!respEmailNome || !(emailsConfig[respEmailNome] || _emailServidorFallback_(respEmailNome))) && servidorFase) {
       respEmailNome = servidorFase;
     }
 
@@ -1253,7 +1296,7 @@ function enviarAvisosPrazo() {
 
     // 1. E-mail para o servidor responsável (apenas se NÃO for processo da chefia)
     if (!isChefProc) {
-      var emailServ = emailsConfig[respEmailNome] || EMAILS_SEL[respEmailNome] || '';
+      var emailServ = emailsConfig[respEmailNome] || _emailServidorFallback_(respEmailNome) || '';
       if (isChefiaEmail(emailServ)) {
         var bodyServ = htmlHeader_('App de Gestão de Prazos/Tarefas - SEL', prefixoAssunto + ' · Colégio Pedro II')
           + mensagemPadrao
@@ -1297,7 +1340,8 @@ function enviarAvisosPrazo() {
 //          setor, emailReq, linkSuap, respInterno, respExterno, servidor}
 // Lógica espelha novoProcesso() do Codigo_v3.gs, sem prompts de UI.
 function cadastrarProcesso(params) {
-  try {
+  return _withAppLockResult_('cadastrar processo', function() {
+    try {
     var ss  = _ss_();
     var shP = ss.getSheetByName(ABA_PROC);
     var shE = ss.getSheetByName(ABA_ETP);
@@ -1501,6 +1545,7 @@ function cadastrarProcesso(params) {
   } catch(e) {
     return { ok: false, erro: e.message };
   }
+  });
 }
 
 // ── migrarNomesEtapas ─────────────────────────────────────────────────────
@@ -1509,7 +1554,8 @@ function cadastrarProcesso(params) {
 //   • Define "Assinatura contrato / Ata (ARP)" como Não se aplica
 // Chamada pelo botão na aba Config do app.
 function migrarNomesEtapas() {
-  try {
+  return _withAppLockResult_('migrar nomes de etapas', function() {
+    try {
     var sh  = _ss_().getSheetByName(ABA_ETP);
     var lE  = _lerAba_(sh, 'ProcessoID');
     var hdr = lE.header;
@@ -1552,6 +1598,7 @@ function migrarNomesEtapas() {
   } catch(e) {
     return { ok: false, erro: e.message };
   }
+  });
 }
 
 function _sincronizarCapacidadeComEtapas_() {
@@ -1726,9 +1773,6 @@ function _sincronizarCapacidadeComEtapas_() {
 function getCapacidadeApp() {
   var sh = _ss_().getSheetByName('📊 Capacidade');
   if (!sh) return null;
-  _corrigirProcessoIdsBlocosEtapas_();
-  _marcarEtapasContratuaisNA_();
-  _sincronizarCapacidadeComEtapas_();
   var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
 
   function titleCase_(s) {
@@ -1943,7 +1987,8 @@ function getCapacidadeApp() {
 // Grava o EmailRequisitante de um processo na aba fProcessos.
 // params: pid (ProcessoID), email (string)
 function salvarEmailProcesso(pid, email) {
-  try {
+  return _withAppLockResult_('salvar email do requisitante', function() {
+    try {
     var shP = _ss_().getSheetByName(ABA_PROC);
     if (!shP) throw new Error('Aba Processos não encontrada.');
     var lP = _garantirColunas_(shP, 'ProcessoID', ['Setor Requisitante', 'EmailRequisitante']);
@@ -1958,14 +2003,16 @@ function salvarEmailProcesso(pid, email) {
       }
     }
     throw new Error('Processo ' + pid + ' não encontrado.');
-  } catch(e) { return { ok: false, erro: e.message }; }
+    } catch(e) { return { ok: false, erro: e.message }; }
+  });
 }
 
 // ── trocarServidor ────────────────────────────────────────────────────────────
 // Atualiza o servidor responsável de um processo na aba 📊 Capacidade (col A).
 // pid: ProcessoID; novoServidor: nome ou '' para remover.
 function trocarServidor(pid, novoServidor) {
-  try {
+  return _withAppLockResult_('trocar servidor', function() {
+    try {
     var sh = _ss_().getSheetByName('📊 Capacidade');
     if (!sh) throw new Error('Aba Capacidade não encontrada.');
     var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
@@ -1987,14 +2034,16 @@ function trocarServidor(pid, novoServidor) {
     }
     // Processo não encontrado na Capacidade — retorna ok sem erro (servidor mantido apenas localmente)
     return { ok: true, aviso: 'Processo não encontrado na aba Capacidade — servidor atualizado apenas localmente.' };
-  } catch(e) { return { ok: false, erro: e.message }; }
+    } catch(e) { return { ok: false, erro: e.message }; }
+  });
 }
 
 // ── atualizarStatusEtapa ──────────────────────────────────────────────────────
 // Grava o novo status de uma etapa na aba fEtapas sem concluí-la.
 // linha: número 1-based da linha na planilha; novoStatus: string do status.
 function atualizarStatusEtapa(linha, novoStatus) {
-  try {
+  return _withAppLockResult_('atualizar status de etapa', function() {
+    try {
     var sh = _ss_().getSheetByName(ABA_ETP);
     if (!sh) throw new Error('Aba Etapas não encontrada.');
     var lE = _lerAba_(sh, 'ProcessoID');
@@ -2012,13 +2061,15 @@ function atualizarStatusEtapa(linha, novoStatus) {
     }
     _sincronizarCapacidadeComEtapas_();
     return { ok: true };
-  } catch(e) { return { ok: false, erro: e.message }; }
+    } catch(e) { return { ok: false, erro: e.message }; }
+  });
 }
 
 // ── salvarOutrosCap ───────────────────────────────────────────────────────────
 // Reabre a etapa concluída imediatamente anterior e registra justificativa.
 function regredirEtapa(params) {
-  try {
+  return _withAppLockResult_('regredir etapa', function() {
+    try {
     params = params || {};
     var pid = String(params.processoId || '').trim();
     var linhaAtual = parseInt(params.linhaEtapaAtual, 10);
@@ -2086,11 +2137,13 @@ function regredirEtapa(params) {
   } catch(e) {
     return { ok: false, erro: e.message };
   }
+  });
 }
 
 // params: {linha (1-based), valor, col (2=interna / 11=externa)}
 function salvarOutrosCap(params) {
-  try {
+  return _withAppLockResult_('salvar outros pontos', function() {
+    try {
     var sh = _ss_().getSheetByName('📊 Capacidade');
     if (!sh) throw new Error('Aba Capacidade não encontrada.');
     var linha = parseInt(params.linha, 10);
@@ -2106,7 +2159,8 @@ function salvarOutrosCap(params) {
       throw new Error('Servidor não informado para salvar Outros.');
     }
     return { ok: true };
-  } catch(e) { return { ok: false, erro: e.message }; }
+    } catch(e) { return { ok: false, erro: e.message }; }
+  });
 }
 
 // ── salvarPontuacaoCap ────────────────────────────────────────────────────────
@@ -2114,14 +2168,16 @@ function salvarOutrosCap(params) {
 // params: {linha (1-based), pts11, pts12, pts23}
 //   cols 7,8,9 = "1.1 ou 2.1 (pts)", "1.2 ou 2.2 (pts)", "2.3 (pts)"
 function salvarPontuacaoCap(params) {
-  try {
+  return _withAppLockResult_('salvar pontuação de capacidade', function() {
+    try {
     var sh = _ss_().getSheetByName('📊 Capacidade');
     if (!sh) throw new Error('Aba Capacidade não encontrada.');
     sh.getRange(params.linha, 7).setValue(params.pts11 || 0);
     sh.getRange(params.linha, 8).setValue(params.pts12 || 0);
     sh.getRange(params.linha, 9).setValue(params.pts23 || 0);
     return { ok: true };
-  } catch(e) { return { ok: false, erro: e.message }; }
+    } catch(e) { return { ok: false, erro: e.message }; }
+  });
 }
 
 // ── getEmails ─────────────────────────────────────────────────────────────
@@ -2150,7 +2206,7 @@ function getServidoresApp() {
   }
   // Enriquece com email de PropertiesService ou EMAILS_SEL
   lista.forEach(function(s) {
-    s.email = props.getProperty('email_' + s.nome) || EMAILS_SEL[s.nome] || '';
+    s.email = props.getProperty('email_' + s.nome) || _emailServidorFallback_(s.nome) || '';
   });
   return lista;
 }
@@ -2159,7 +2215,8 @@ function getServidoresApp() {
 // Persiste a lista completa de servidores no PropertiesService.
 // lista: [{nome, cor, isChefe}] — e-mails são mantidos separadamente.
 function salvarServidoresApp(lista) {
-  try {
+  return _withAppLockResult_('salvar equipe', function() {
+    try {
     if (!Array.isArray(lista)) throw new Error('Lista inválida.');
     var props = PropertiesService.getScriptProperties();
     var antiga = getServidoresApp().map(function(s) {
@@ -2218,7 +2275,8 @@ function salvarServidoresApp(lista) {
     if (renomes.length) _sincronizarCapacidadeComEtapas_();
 
     return { ok: true, renomes: renomes.length, alterados: alterados };
-  } catch(e) { return { ok: false, erro: e.message }; }
+    } catch(e) { return { ok: false, erro: e.message }; }
+  });
 }
 
 // Retorna {Amanda: email, Beatriz: email, ...} do PropertiesService.
@@ -2228,7 +2286,7 @@ function getEmails() {
   var props = PropertiesService.getScriptProperties();
   var emails = {};
   lista.forEach(function(s) {
-    emails[s.nome] = props.getProperty('email_' + s.nome) || EMAILS_SEL[s.nome] || '';
+    emails[s.nome] = props.getProperty('email_' + s.nome) || _emailServidorFallback_(s.nome) || '';
   });
   return emails;
 }
@@ -2236,29 +2294,33 @@ function getEmails() {
 // ── salvarEmail ───────────────────────────────────────────────────────────
 // Salva/atualiza o e-mail de um servidor no PropertiesService.
 function salvarEmail(servidor, email) {
-  try {
+  return _withAppLockResult_('salvar email de servidor', function() {
+    try {
     if (!servidor) throw new Error('Servidor não informado.');
     if (email && email.indexOf('@') < 0) throw new Error('E-mail inválido.');
     PropertiesService.getScriptProperties().setProperty('email_' + servidor, email);
     _salvarServidoresConfigSheet_(getServidoresApp());
     return { ok: true };
-  } catch(e) { return { ok: false, erro: e.message }; }
+    } catch(e) { return { ok: false, erro: e.message }; }
+  });
 }
 
 // ── instalarTriggerAvisos ─────────────────────────────────────────────────
 // Chamada pelo botão "Instalar trigger" no app.
 // Remove trigger anterior (se existir) e instala novo às 10h30 diariamente.
 function instalarTriggerAvisos() {
-  ScriptApp.getProjectTriggers().forEach(function(t) {
-    if (t.getHandlerFunction() === 'enviarAvisosPrazo') ScriptApp.deleteTrigger(t);
+  return _withAppLock_('instalar trigger de avisos', function() {
+    ScriptApp.getProjectTriggers().forEach(function(t) {
+      if (t.getHandlerFunction() === 'enviarAvisosPrazo') ScriptApp.deleteTrigger(t);
+    });
+    ScriptApp.newTrigger('enviarAvisosPrazo').timeBased().everyDays(1).atHour(AVISO_HORA).nearMinute(AVISO_MINUTO).create();
+    PropertiesService.getScriptProperties().setProperties({
+      SEL_TRIGGER_AVISOS_INSTALADO_EM: new Date().toISOString(),
+      SEL_TRIGGER_AVISOS_HORA: AVISO_HORA_LABEL,
+      SEL_TRIGGER_AVISOS_TZ: Session.getScriptTimeZone()
+    });
+    return 'Trigger instalado. Avisos serão enviados todos os dias por volta das ' + AVISO_HORA_LABEL + '.';
   });
-  ScriptApp.newTrigger('enviarAvisosPrazo').timeBased().everyDays(1).atHour(AVISO_HORA).nearMinute(AVISO_MINUTO).create();
-  PropertiesService.getScriptProperties().setProperties({
-    SEL_TRIGGER_AVISOS_INSTALADO_EM: new Date().toISOString(),
-    SEL_TRIGGER_AVISOS_HORA: AVISO_HORA_LABEL,
-    SEL_TRIGGER_AVISOS_TZ: Session.getScriptTimeZone()
-  });
-  return 'Trigger instalado. Avisos serão enviados todos os dias por volta das ' + AVISO_HORA_LABEL + '.';
 }
 
 // ── verificarTriggerAvisos ────────────────────────────────────────────────
@@ -2287,7 +2349,7 @@ function enviarEmailTesteServidor(servidor) {
     servidor = String(servidor || '').trim();
     if (!servidor) throw new Error('Servidor não informado.');
     var emails = getEmails();
-    var dest = emails[servidor] || EMAILS_SEL[servidor] || '';
+    var dest = emails[servidor] || _emailServidorFallback_(servidor) || '';
     if (!dest || dest.indexOf('@') < 0 || dest.indexOf('COLE_') === 0) {
       throw new Error('E-mail de ' + servidor + ' não está cadastrado na Config.');
     }
@@ -2316,7 +2378,8 @@ function enviarEmailTesteServidor(servidor) {
 // params: {pid, servInt, servExt, modal}
 // Retorna: {ok, avisos: [{fase, msg}]}
 function atribuirResponsaveisApp(params) {
-  try {
+  return _withAppLockResult_('atribuir responsáveis', function() {
+    try {
     var ss     = _ss_();
     var pid    = params.pid    || '';
     var servInt = params.servInt || '';
@@ -2392,5 +2455,6 @@ function atribuirResponsaveisApp(params) {
 
     _sincronizarCapacidadeComEtapas_();
     return { ok: true, avisos: avisos };
-  } catch(e) { return { ok: false, erro: e.message }; }
+    } catch(e) { return { ok: false, erro: e.message }; }
+  });
 }

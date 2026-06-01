@@ -43,6 +43,31 @@
 // dois lugares se um dia precisar mudar — ex: 2028 em diante).
 var ANO_BASE = 2026;
 
+// Painel público: este projeto deve servir apenas consulta.
+// Toda alteração operacional deve acontecer pelo AppSEL.
+var PAINEL_SOMENTE_LEITURA = true;
+var PAINEL_WEBAPP_URL_FALLBACK = 'https://script.google.com/macros/s/AKfycbxlFw7HNHnjx8NwEF9LTrcr4-tXXwgVXk4yTqFPpGs/dev';
+
+function painelConfig_(chave, fallback) {
+  try {
+    var val = PropertiesService.getScriptProperties().getProperty(chave);
+    return val !== null && val !== undefined && String(val).trim() !== '' ? val : fallback;
+  } catch(e) {
+    return fallback;
+  }
+}
+
+function painelWebAppUrl_() {
+  return painelConfig_('PAINEL_WEBAPP_URL', PAINEL_WEBAPP_URL_FALLBACK);
+}
+
+function painelBloquearEscrita_(acao) {
+  var msg = 'Painel público somente para consulta. Ação bloqueada: ' + acao + '. Use o AppSEL para qualquer alteração.';
+  try { SpreadsheetApp.getUi().alert(msg); } catch(e) {}
+  Logger.log('[READ_ONLY] ' + msg);
+  return { ok: false, erro: msg };
+}
+
 // Servidores ativos usados na automacao de capacidade. IGOR fica fora por
 // ter saido do setor; processos antigos que dependerem dele ficam para revisao.
 var CAP_SERVIDORES_ATIVOS = ['AMANDA', 'BEATRIZ', 'BRUNO', 'SAMUEL'];
@@ -90,23 +115,11 @@ var PORTARIA_638 = {
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('📊 Painel SEL')
-    .addItem('🌐 Abrir Painel (dashboard)', 'abrirPainel')
-    .addItem('➕ Novo Processo', 'novoProcesso')
-    .addSeparator()
-    .addSubMenu(ui.createMenu('📊 Capacidade')
-      .addItem('Sincronizar capacidade', 'sincronizarCapacidade')
-      .addItem('Concluir processo', 'concluirProcesso'))
+    .addItem('🌐 Abrir Painel (consulta)', 'abrirPainel')
+    .addItem('🔄 Atualizar cache do painel', 'atualizarDadosPainel')
     .addSeparator()
     .addItem('🔎 Validar integridade da planilha', 'validarPlanilha')
-    .addSeparator()
-    .addSubMenu(ui.createMenu('🔔 Detector de Atraso')
-      .addItem('Instalar (avisa ao preencher DataRealizacao)', 'instalarTriggerOnEdit')
-      .addItem('Desinstalar', 'desinstalarTriggerOnEdit'))
     .addToUi();
-
-  // Garante que a coluna DataRealizacao exiba datas no formato DD/MM/YYYY
-  // a cada abertura da planilha — evita datas "invertidas" por localidade.
-  try { formatarColunaDatas(); } catch(e) {}
 }
 
 
@@ -255,6 +268,7 @@ function _dmy_(d) {
 //   - preencherDataRealizacaoHoje() → ao preencher datas em lote
 // ════════════════════════════════════════════════════════════════════════
 function formatarColunaDatas() {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('formatar coluna de datas');
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var wsEtapas = null;
   ss.getSheets().forEach(function(s) {
@@ -278,7 +292,7 @@ function formatarColunaDatas() {
 
 // Abre o painel (dashboard) em uma nova aba do navegador
 function abrirPainel() {
-  var url = 'https://script.google.com/macros/s/AKfycbxlFw7HNHnjx8NwEF9LTrcr4-tXXwgVXk4yTqFPpGs/dev';
+  var url = painelWebAppUrl_();
   var html = HtmlService.createHtmlOutput(
     '<script>window.open("' + url + '", "_blank");google.script.host.close();</script>'
   ).setWidth(200).setHeight(50);
@@ -779,6 +793,7 @@ function atualizacaoDiaria() {
 
 // Instala o trigger para rodar todo dia entre 5h–6h
 function instalarTriggerDiario() {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('instalar trigger diário');
   // Remove triggers anteriores para evitar duplicação
   desinstalarTriggerDiario();
   ScriptApp.newTrigger('atualizacaoDiaria')
@@ -792,6 +807,7 @@ function instalarTriggerDiario() {
 
 // Remove todos os triggers da função atualizacaoDiaria
 function desinstalarTriggerDiario() {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('desinstalar trigger diário');
   var triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(function(t) {
     if (t.getHandlerFunction() === 'atualizacaoDiaria') {
@@ -809,6 +825,7 @@ function desinstalarTriggerDiario() {
 // Facilita o uso: célula com data já abre o calendário no primeiro clique.
 // Só preenche células VAZIAS — não sobrescreve datas já registradas.
 function preencherDataRealizacaoHoje() {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('preencher DataRealizacao em lote');
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var wsEtapas = null;
   ss.getSheets().forEach(function(s) {
@@ -850,6 +867,7 @@ function preencherDataRealizacaoHoje() {
 }
 
 function instalarTriggerOnEdit() {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('instalar detector de atraso');
   desinstalarTriggerOnEdit(); // evita duplicação
   ScriptApp.newTrigger('onEditAtraso')
     .forSpreadsheet(SpreadsheetApp.getActive())
@@ -863,6 +881,7 @@ function instalarTriggerOnEdit() {
 }
 
 function desinstalarTriggerOnEdit() {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('desinstalar detector de atraso');
   var triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(function(t) {
     if (t.getHandlerFunction() === 'onEditAtraso') {
@@ -890,6 +909,7 @@ function desinstalarTriggerOnEdit() {
 // ════════════════════════════════════════════════════════════════════════
 
 function novoProcesso() {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('cadastrar novo processo pelo painel');
   var ui = SpreadsheetApp.getUi();
 
   // ── Coleta dados via prompts (ProcessoID gerado automaticamente) ─────
@@ -1445,6 +1465,7 @@ function capAtualizarFormulasResumo_(wsCap, info) {
 // ════════════════════════════════════════════════════════════════════════
 
 function migrarCapacidadeAtual() {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('migrar capacidade pelo painel');
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var wsCap = capFindSheet_(ss, 'Capacidade');
@@ -1930,6 +1951,7 @@ function capAppendRows_(items) {
 }
 
 function prepararMigracaoCapacidade() {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('preparar migração de capacidade');
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var processos = capBuildProcessos_();
@@ -2012,6 +2034,7 @@ function prepararMigracaoCapacidade() {
 }
 
 function aplicarMigracaoCapacidade() {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('aplicar migração de capacidade');
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var wsPrev = ss.getSheetByName('Previa Migracao Capacidade');
@@ -2106,6 +2129,7 @@ function aplicarMigracaoCapacidade() {
 //   - Pelo trigger diário (atualizacaoDiaria)
 // ════════════════════════════════════════════════════════════════════════
 function sincronizarCapacidade(silencioso) {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('sincronizar capacidade pelo painel');
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var wsCap = capFindSheet_(ss, 'Capacidade');
   if (!wsCap) return { ok: false, erro: 'Aba Capacidade nao encontrada.' };
@@ -2197,6 +2221,7 @@ function sincronizarCapacidade(silencioso) {
 }
 
 function concluirProcesso() {
+  if (PAINEL_SOMENTE_LEITURA) return painelBloquearEscrita_('concluir processo pelo painel');
   var ui = SpreadsheetApp.getUi();
   var resp = ui.prompt('Concluir processo', 'Informe o ProcessoID (ex: SEL-2026-001):', ui.ButtonSet.OK_CANCEL);
   if (resp.getSelectedButton() !== ui.Button.OK) return;
@@ -2331,6 +2356,10 @@ function modalAbrev(m) {
 // o GAS executa automaticamente toda vez que há uma edição na planilha.
 // ════════════════════════════════════════════════════════════════════════
 function onEdit(e) {
+  if (PAINEL_SOMENTE_LEITURA) {
+    Logger.log('[READ_ONLY] Edição manual detectada, mas o painel público não grava nem sincroniza dados.');
+    return;
+  }
   if (!e || !e.range) return;
 
   var sheet = e.range.getSheet();
@@ -2387,6 +2416,10 @@ function onEdit(e) {
 // ════════════════════════════════════════════════════════════════════════
 
 function onEditAtraso(e) {
+  if (PAINEL_SOMENTE_LEITURA) {
+    Logger.log('[READ_ONLY] onEditAtraso ignorado: alterações devem ser registradas pelo AppSEL.');
+    return;
+  }
   // Ignora edições fora da planilha ativa ou sem range definido
   if (!e || !e.range) return;
 
@@ -2681,8 +2714,9 @@ function getCapacidade() {
         var keyResumo = capNorm_(nomeResumo);
         if (!usandoConfigServidores) servidoresResumo[keyResumo] = true;
         if (!usandoConfigServidores || servidoresResumo[keyResumo]) {
+          // Painel público mostra a capacidade interna, que é a informação
+          // útil para requisitantes avaliarem entrada de novas demandas.
           outrosPts += parseNumCap_(dados[sr][1]);
-          outrosPts += parseNumCap_(dados[sr][10]);
         }
       }
     }
@@ -2700,8 +2734,10 @@ function getCapacidade() {
         var servCap = iServ >= 0 ? String(rowCap[iServ] || '').trim() : String(rowCap[0] || '').trim();
         if (!servCap) continue;
         if (iAtivo >= 0 && !isSimCap_(rowCap[iAtivo])) continue;
-        // Soma qualquer fase ativa. A coluna Ativo já evita dupla contagem entre
-        // fase interna e externa de um mesmo processo.
+        var faseCap = iFase >= 0 ? capNorm_(rowCap[iFase]) : '';
+        if (faseCap.indexOf('EXTERNA') >= 0) continue;
+        // Soma somente a carga interna ativa. A fase externa segue controlada
+        // internamente no AppSEL, sem inflar o indicador público.
         processosPts += iTotal >= 0 ? parseNumCap_(rowCap[iTotal]) : 0;
         if (usarServidoresDoRegistro) servidoresResumo[capNorm_(servCap)] = true;
       }
@@ -2715,16 +2751,9 @@ function getCapacidade() {
     var tetoPts  = tetoOficial > 0 ? tetoOficial : (qtdServidores ? qtdServidores * 10 : 40);
     var pct      = tetoPts > 0 ? totalPts / tetoPts : 0;
 
-    // O percentual é calculado no servidor para refletir imediatamente todas
-    // as fases ativas, mesmo antes das fórmulas da planilha recalcularem.
-
-    // col C (índice 2) = nível textual
-    var nivel = String(rowStatus[2] || '').trim();
-    // Se a fórmula devolveu string vazia (ex: planilha nunca foi aberta no Sheets),
-    // calcula o nível aqui mesmo no servidor
-    if (!nivel) {
-      nivel = pct >= 0.9 ? '🔴 Máxima' : pct >= 0.6 ? '🟡 Limitada' : '🟢 Disponível';
-    }
+    // O percentual público é calculado no servidor apenas com a fase interna,
+    // para não depender de fórmula antiga nem misturar a fila externa.
+    var nivel = pct >= 0.9 ? '🔴 Máxima' : pct >= 0.6 ? '🟡 Limitada' : '🟢 Disponível';
 
     // Mensagem orientada ao setor requisitante — calculada sempre pelo servidor
     // para garantir coerência independentemente do que estiver na célula D13.
@@ -2744,7 +2773,8 @@ function getCapacidade() {
       nivel:    nivel,
       mensagem: mensagem,
       totalPts: totalPts,
-      tetoPts:  tetoPts
+      tetoPts:  tetoPts,
+      fase:     'interna'
     };
 
     // Cache por 60 segundos
