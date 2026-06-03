@@ -10,7 +10,7 @@
 // 5. Implantar → Novo → App da Web
 //    • Executar como: Eu
 //    • Quem pode acessar: Qualquer pessoa com o link
-// 6. Copie a URL gerada e distribua para a equipe SEL
+// 6. Copie a URL gerada e distribua para a equipe SEL/SEPMA
 //
 // ── COMO OBTER O SS_ID ───────────────────────────────────────────────────
 // Abra a planilha CronogramaContratacoes no Google Sheets.
@@ -72,6 +72,127 @@ function _withAppLockResult_(acao, fn) {
   } catch(e) {
     return { ok: false, erro: e.message };
   }
+}
+
+function _limparCacheCapacidade_() {
+  try { CacheService.getScriptCache().remove('dados_capacidade'); } catch(e) {}
+}
+
+function _authNorm_(s) {
+  return String(s || '').trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function _authMatriculaPadrao_(nome) {
+  return _authNorm_(nome);
+}
+
+function _authSalt_() {
+  return Utilities.getUuid().replace(/-/g, '');
+}
+
+function _authHash_(senha, salt) {
+  var bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(salt || '') + '::' + String(senha || ''),
+    Utilities.Charset.UTF_8
+  );
+  return Utilities.base64Encode(bytes);
+}
+
+function _authUsers_() {
+  var props = PropertiesService.getScriptProperties();
+  var raw = props.getProperty('SEL_AUTH_USERS_JSON');
+  if (!raw) return {};
+  try { return JSON.parse(raw) || {}; } catch(e) { return {}; }
+}
+
+function _authSaveUsers_(users) {
+  PropertiesService.getScriptProperties()
+    .setProperty('SEL_AUTH_USERS_JSON', JSON.stringify(users || {}));
+}
+
+function _authSyncServidores_(lista) {
+  var users = _authUsers_();
+  var changed = false;
+  var validos = {};
+  (lista || []).forEach(function(s) {
+    var matricula = _authNorm_(s.matricula || _authMatriculaPadrao_(s.nome));
+    if (!matricula) return;
+    validos[matricula] = true;
+    if (!users[matricula]) {
+      var salt = _authSalt_();
+      users[matricula] = {
+        nome: s.nome,
+        matricula: matricula,
+        salt: salt,
+        hash: _authHash_('123456', salt),
+        isChefe: !!s.isChefe,
+        mustChange: true
+      };
+      changed = true;
+    } else {
+      if (users[matricula].nome !== s.nome) { users[matricula].nome = s.nome; changed = true; }
+      if (!!users[matricula].isChefe !== !!s.isChefe) { users[matricula].isChefe = !!s.isChefe; changed = true; }
+    }
+  });
+  Object.keys(users).forEach(function(matricula) {
+    if (!validos[_authNorm_(matricula)]) {
+      delete users[matricula];
+      changed = true;
+    }
+  });
+  if (changed) _authSaveUsers_(users);
+  return users;
+}
+
+function _authSessionKey_(token) {
+  return 'SEL_AUTH_SESSION_' + String(token || '').replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+function _authCreateSession_(user) {
+  var token = Utilities.getUuid();
+  var exp = 0;
+  PropertiesService.getScriptProperties().setProperty(_authSessionKey_(token), JSON.stringify({
+    nome: user.nome,
+    matricula: user.matricula,
+    isChefe: !!user.isChefe,
+    exp: exp
+  }));
+  return { token: token, exp: exp };
+}
+
+function _authGetSession_(token) {
+  if (!token) throw new Error('Sessão expirada. Faça login novamente.');
+  var props = PropertiesService.getScriptProperties();
+  var raw = props.getProperty(_authSessionKey_(token));
+  if (!raw) throw new Error('Sessão expirada. Faça login novamente.');
+  var sess;
+  try { sess = JSON.parse(raw); } catch(e) { sess = null; }
+  if (!sess || (sess.exp && Date.now() > sess.exp)) {
+    props.deleteProperty(_authSessionKey_(token));
+    throw new Error('Sessão expirada. Faça login novamente.');
+  }
+  var users = _authUsers_();
+  var user = users[_authNorm_(sess.matricula)];
+  if (!user) {
+    props.deleteProperty(_authSessionKey_(token));
+    throw new Error('Usuário removido da equipe. Faça login novamente.');
+  }
+  sess.mustChange = !!user.mustChange;
+  sess.isChefe = !!user.isChefe;
+  sess.nome = user.nome || sess.nome;
+  return sess;
+}
+
+function _authRequire_(token, chefe, allowMustChange) {
+  var sess = _authGetSession_(token);
+  if (sess.mustChange && !allowMustChange) {
+    throw new Error('Troque a senha temporária antes de continuar.');
+  }
+  if (chefe && !sess.isChefe) throw new Error('Ação restrita à chefia.');
+  return sess;
 }
 
 var ABA_PROC = '🏛 Processos';
@@ -203,7 +324,7 @@ function _garantirColunas_(sh, chave, colunas) {
 function _servidoresValidosMap_() {
   var map = {};
   try {
-    getServidoresApp().forEach(function(s) {
+    _getServidoresApp_().forEach(function(s) {
       if (s.nome) map[_normServidorNome_(s.nome)] = s.nome;
     });
   } catch(e) {
@@ -313,9 +434,10 @@ function _lerServidoresConfigSheet_() {
   try {
     var sh = _ss_().getSheetByName('⚙️ ConfigSEL') || _ss_().getSheetByName('ConfigSEL');
     if (!sh || sh.getLastRow() < 2) return null;
-    var vals = sh.getRange(1, 1, sh.getLastRow(), Math.max(sh.getLastColumn(), 4)).getValues();
+    var vals = sh.getRange(1, 1, sh.getLastRow(), Math.max(sh.getLastColumn(), 5)).getValues();
     var h = vals[0].map(function(c){ return String(c || '').trim(); });
     var iNome = h.indexOf('Nome');
+    var iMat = h.indexOf('Matricula');
     var iCor = h.indexOf('Cor');
     var iChefe = h.indexOf('Chefe');
     if (iNome < 0) return null;
@@ -325,6 +447,7 @@ function _lerServidoresConfigSheet_() {
       if (!nome) continue;
       out.push({
         nome: nome,
+        matricula: iMat >= 0 ? String(vals[r][iMat] || '').trim() : _authMatriculaPadrao_(nome),
         cor: iCor >= 0 ? String(vals[r][iCor] || '#64748b').trim() : '#64748b',
         isChefe: iChefe >= 0 && _isSim_(vals[r][iChefe])
       });
@@ -341,10 +464,11 @@ function _salvarServidoresConfigSheet_(lista) {
     var sh = ss.getSheetByName('⚙️ ConfigSEL') || ss.getSheetByName('ConfigSEL');
     if (!sh) sh = ss.insertSheet('⚙️ ConfigSEL');
     var props = PropertiesService.getScriptProperties();
-    var values = [['Nome', 'Cor', 'Chefe', 'Email']];
+    var values = [['Nome', 'Matricula', 'Cor', 'Chefe', 'Email']];
     lista.forEach(function(s) {
       values.push([
         s.nome,
+        s.matricula || _authMatriculaPadrao_(s.nome),
         s.cor || '#64748b',
         s.isChefe ? 'Sim' : 'Não',
         props.getProperty('email_' + s.nome) || _emailServidorFallback_(s.nome) || ''
@@ -489,10 +613,143 @@ function doGet() {
     .addMetaTag('viewport', 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no');
 }
 
+function loginApp(matricula, senha) {
+  try {
+    var lista = _getServidoresApp_();
+    var users = _authSyncServidores_(lista);
+    var mat = _authNorm_(matricula);
+    if (!mat || !users[mat]) return { ok: false, erro: 'Matrícula ou senha inválida.' };
+    var user = users[mat];
+    if (user.hash !== _authHash_(senha, user.salt)) {
+      return { ok: false, erro: 'Matrícula ou senha inválida.' };
+    }
+    var sess = _authCreateSession_(user);
+    return {
+      ok: true,
+      token: sess.token,
+      exp: sess.exp,
+      nome: user.nome,
+      matricula: user.matricula,
+      isChefe: !!user.isChefe,
+      mustChange: !!user.mustChange,
+      servidores: lista
+    };
+  } catch(e) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+function validarSessaoApp(token) {
+  try {
+    var sess = _authGetSession_(token);
+    var lista = _getServidoresApp_();
+    return {
+      ok: true,
+      token: token,
+      exp: sess.exp,
+      nome: sess.nome,
+      matricula: sess.matricula,
+      isChefe: !!sess.isChefe,
+      mustChange: !!sess.mustChange,
+      servidores: lista
+    };
+  } catch(e) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+function logoutApp(token) {
+  try {
+    if (token) PropertiesService.getScriptProperties().deleteProperty(_authSessionKey_(token));
+  } catch(e) {}
+  return { ok: true };
+}
+
+function trocarSenhaApp(token, senhaAtual, novaSenha) {
+  return _withAppLockResult_('trocar senha', function() {
+    var sess = _authRequire_(token, false, true);
+    if (!novaSenha || String(novaSenha).length < 4) throw new Error('A nova senha precisa ter ao menos 4 caracteres.');
+    var users = _authSyncServidores_(_getServidoresApp_());
+    var user = users[_authNorm_(sess.matricula)];
+    if (!user) throw new Error('Usuário não encontrado.');
+    if (!user.mustChange && user.hash !== _authHash_(senhaAtual, user.salt)) throw new Error('Senha atual inválida.');
+    var salt = _authSalt_();
+    user.salt = salt;
+    user.hash = _authHash_(novaSenha, salt);
+    user.mustChange = false;
+    users[_authNorm_(sess.matricula)] = user;
+    _authSaveUsers_(users);
+    return { ok: true };
+  });
+}
+
+function resetarSenhaServidorApp(token, matricula) {
+  return _withAppLockResult_('resetar senha', function() {
+    _authRequire_(token, true);
+    var users = _authSyncServidores_(_getServidoresApp_());
+    var mat = _authNorm_(matricula);
+    if (!mat || !users[mat]) throw new Error('Usuário não encontrado.');
+    var salt = _authSalt_();
+    users[mat].salt = salt;
+    users[mat].hash = _authHash_('123456', salt);
+    users[mat].mustChange = true;
+    _authSaveUsers_(users);
+    return { ok: true, senhaTemporaria: '123456' };
+  });
+}
+
+// ── Recuperação de senha ──────────────────────────────────────────────────
+function solicitarResetSenhaApp(matricula) {
+  return _withAppLockResult_('recuperar senha', function() {
+    var lista = _getServidoresApp_();
+    var users = _authSyncServidores_(lista);
+    var mat = _authNorm_(matricula);
+    if (!mat || !users[mat]) throw new Error('Matrícula não cadastrada.');
+
+    var servidor = lista.find(function(s) { return _authNorm_(s.matricula) === mat; });
+    if (!servidor) throw new Error('Matrícula não cadastrada.');
+
+    var email = servidor.email || _emailServidorFallback_(servidor.nome) || '';
+    if (!email || email.indexOf('@') < 0 || email.indexOf('COLE_') === 0) {
+      throw new Error('Não há e-mail cadastrado para essa matrícula. Peça a outro chefe para resetar pela Config.');
+    }
+
+    var props = PropertiesService.getScriptProperties();
+    var rateKey = 'SEL_RESET_TS_' + mat;
+    var lastReset = Number(props.getProperty(rateKey) || 0);
+    if (Date.now() - lastReset < 5 * 60 * 1000) {
+      throw new Error('Aguarde alguns minutos antes de pedir outro reset.');
+    }
+
+    var temp = String(Math.floor(100000 + Math.random() * 900000));
+    var salt = _authSalt_();
+    users[mat].salt = salt;
+    users[mat].hash = _authHash_(temp, salt);
+    users[mat].mustChange = true;
+
+    var html = '<div style="font-family:Arial,sans-serif;max-width:560px;color:#1e293b;">'
+      + '<h2 style="font-size:18px;color:#1a3a5c;">Recuperação de senha - AppSEL</h2>'
+      + '<p>Olá, <b>' + servidor.nome + '</b>.</p>'
+      + '<p>Sua senha temporária é:</p>'
+      + '<div style="font-size:24px;font-weight:800;letter-spacing:3px;background:#f1f5f9;border-radius:8px;padding:12px 16px;display:inline-block;">' + temp + '</div>'
+      + '<p>Ao entrar, o AppSEL pedirá a troca dessa senha.</p>'
+      + '<p style="font-size:12px;color:#64748b;">Se você não solicitou isso, avise a chefia do SEL/SEPMA.</p>'
+      + '</div>';
+    MailApp.sendEmail(email, 'Recuperação de senha - AppSEL', '', { htmlBody: html });
+    _authSaveUsers_(users);
+    props.setProperty(rateKey, String(Date.now()));
+    return { ok: true, email: email.replace(/^(.{2}).*(@.*)$/, '$1***$2') };
+  });
+}
+
 // ── getEtapasParaApp ──────────────────────────────────────────────────────
 // Retorna todos os processos com etapas calculadas em cascata (dias úteis).
 // Inclui referência ao histórico de motivos para exibir o cadeado no app.
-function getEtapasParaApp() {
+function getEtapasParaApp(authToken) {
+  return _getEtapasParaApp_(_authRequire_(authToken, false));
+}
+
+function _getEtapasParaApp_(sess) {
   var ss = _ss_();
 
   // ── Processos ──────────────────────────────────────────────────────────
@@ -718,15 +975,16 @@ function getEtapasParaApp() {
     return fp;
   });
 
-  return { processos: resultado, filaPrevisao: filaPrevisao };
+  return { processos: resultado, filaPrevisao: sess.isChefe ? filaPrevisao : [] };
 }
 
 // ── iniciarProcessos ──────────────────────────────────────────────────────
 // Define D0 para processos da fila, tornando-os ativos na aba Etapas.
 // params: [{pid, d0 (YYYY-MM-DD), servidor, servidorExt}]
-function iniciarProcessos(params) {
+function iniciarProcessos(params, authToken) {
   return _withAppLockResult_('iniciar processos', function() {
     try {
+    _authRequire_(authToken || (params && params.authToken), true);
     var ss  = _ss_();
     var shP = ss.getSheetByName(ABA_PROC);
     var shE = ss.getSheetByName(ABA_ETP);
@@ -794,6 +1052,7 @@ function iniciarProcessos(params) {
       _setCapacidadeAtivo_(item.pid, 'externa', 'Não');
     });
     _sincronizarCapacidadeComEtapas_();
+    _limparCacheCapacidade_();
     return { ok: true, iniciados: iniciados };
     } catch(e) { return { ok: false, erro: e.message }; }
   });
@@ -821,6 +1080,7 @@ function _d0DoProcesso_(pid) {
 function concluirEtapa(params) {
   return _withAppLockResult_('concluir etapa', function() {
     try {
+    _authRequire_(params && params.authToken, false);
     var sh  = _ss_().getSheetByName(ABA_ETP);
     var lEt = _lerAba_(sh, 'ProcessoID');
     var hdr = lEt.header;
@@ -867,6 +1127,7 @@ function concluirEtapa(params) {
     // sinalizando que aquele servidor concluiu sua parte e a carga deixa de contar.
     var transicao = _verificarTransicaoFase_(params.processoId, params.linhaEtapa, sh, lEt, hdr);
     _sincronizarCapacidadeComEtapas_();
+    _limparCacheCapacidade_();
     return { ok: true, transicaoFase: transicao.feita, servidorExt: transicao.servidorExt };
 
   } catch(e) {
@@ -952,7 +1213,8 @@ function _verificarTransicaoFase_(pid, linhaConcluidaBase1, shEtapas, lEt, hdr) 
 
 // ── getHistorico ──────────────────────────────────────────────────────────
 // Retorna todos os registros do histórico, ordenados do mais recente.
-function getHistorico() {
+function getHistorico(authToken) {
+  _authRequire_(authToken, true);
   var ss = _ss_();
   var sh = ss.getSheetByName(ABA_HIST);
   if (!sh || sh.getLastRow() < 2) return [];
@@ -1073,15 +1335,15 @@ function _appendHist_(e) {
 //
 // Não envia para processos concluídos (ok), planejamento/a iniciar ou suspensos.
 function enviarAvisosPrazo() {
-  var emailsConfig = getEmails();
-  var dadosRaw = getEtapasParaApp();
+  var emailsConfig = _getEmails_({ isChefe: true, nome: 'Sistema' });
+  var dadosRaw = _getEtapasParaApp_({ isChefe: true, nome: 'Sistema' });
   // Suporta tanto retorno antigo (array) quanto novo ({processos, filaPrevisao})
   var dados = (dadosRaw && dadosRaw.processos) ? dadosRaw.processos : (dadosRaw || []);
 
   var hoje = new Date(); hoje.setHours(0, 0, 0, 0);
 
   // Servidores que são chefes do setor — processos deles não geram e-mail separado para agente
-  var CHEFES_LISTA = getServidoresApp()
+  var CHEFES_LISTA = _getServidoresApp_()
     .filter(function(s) { return s.isChefe; })
     .map(function(s) { return s.nome; });
   var chefiaEmails = [];
@@ -1334,6 +1596,11 @@ function enviarAvisosPrazo() {
   return 'E-mails enviados: ' + enviados + ' (' + avisosProximos.length + ' próximos + ' + avisosVencidos.length + ' vencidos).';
 }
 
+function enviarAvisosPrazoApp(authToken) {
+  _authRequire_(authToken, true);
+  return enviarAvisosPrazo();
+}
+
 // ── cadastrarProcesso ─────────────────────────────────────────────────────
 // Chamada pelo app ao confirmar um novo processo.
 // params: {objeto, modalidade, d0 (YYYY-MM-DD), nroSuap, temIRP ('Sim'|'Não'),
@@ -1342,6 +1609,7 @@ function enviarAvisosPrazo() {
 function cadastrarProcesso(params) {
   return _withAppLockResult_('cadastrar processo', function() {
     try {
+    _authRequire_(params && params.authToken, true);
     var ss  = _ss_();
     var shP = ss.getSheetByName(ABA_PROC);
     var shE = ss.getSheetByName(ABA_ETP);
@@ -1540,6 +1808,7 @@ function cadastrarProcesso(params) {
     })();
 
     _sincronizarCapacidadeComEtapas_();
+    _limparCacheCapacidade_();
 
     return { ok: true, pid: novoPID };
   } catch(e) {
@@ -1553,9 +1822,10 @@ function cadastrarProcesso(params) {
 //   • Renomeia "Adequações finais", "Versão final do TR" e "Envio ao SEL/SEPMA"
 //   • Define "Assinatura contrato / Ata (ARP)" como Não se aplica
 // Chamada pelo botão na aba Config do app.
-function migrarNomesEtapas() {
+function migrarNomesEtapas(authToken) {
   return _withAppLockResult_('migrar nomes de etapas', function() {
     try {
+    _authRequire_(authToken, true);
     var sh  = _ss_().getSheetByName(ABA_ETP);
     var lE  = _lerAba_(sh, 'ProcessoID');
     var hdr = lE.header;
@@ -1770,7 +2040,8 @@ function _sincronizarCapacidadeComEtapas_() {
 // Lê a aba 📊 Capacidade e retorna:
 //   resumoInt / resumoExt  — resumo por servidor (Fase Interna / Externa)
 //   registrosInt / registrosExt — processos separados por fase
-function getCapacidadeApp() {
+function getCapacidadeApp(authToken) {
+  _authRequire_(authToken, false);
   var sh = _ss_().getSheetByName('📊 Capacidade');
   if (!sh) return null;
   var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
@@ -1793,18 +2064,30 @@ function getCapacidadeApp() {
   }
   function recalcularResumo_(resumo, registros) {
     var soma = {};
+    var futuro = {};
+    var futuroQtd = {};
     registros.forEach(function(r) {
-      if (r.ativo !== 'Sim') return;
       if (r.concluido) return;
       var key = _normServidorNome_(r.servidor);
-      soma[key] = (soma[key] || 0) + r.total;
+      if (r.ativo === 'Sim') {
+        soma[key] = (soma[key] || 0) + r.total;
+      } else {
+        futuro[key] = (futuro[key] || 0) + r.total;
+        futuroQtd[key] = (futuroQtd[key] || 0) + 1;
+      }
     });
     resumo.forEach(function(s) {
-      var processos = soma[_normServidorNome_(s.servidor)] || 0;
+      var key = _normServidorNome_(s.servidor);
+      var processos = soma[key] || 0;
+      var futuros = futuro[key] || 0;
       s.processos = round1_(processos);
       s.total = round1_(s.processos + s.outros);
       s.pct = s.teto ? round1_(s.total / s.teto * 100) : 0;
       s.status = s.pct >= 90 ? 'Crítico' : (s.pct >= 60 ? 'Atenção' : 'Disponível');
+      s.futuros = round1_(futuros);
+      s.futurosQtd = futuroQtd[key] || 0;
+      s.projetado = round1_(s.total + s.futuros);
+      s.pctProjetado = s.teto ? round1_(s.projetado / s.teto * 100) : 0;
     });
   }
 
@@ -1917,7 +2200,8 @@ function getCapacidadeApp() {
   }
 
   function montarResumoDinamico_(fase, mapa) {
-    var listaServ = getServidoresApp();
+    var listaServ = _getServidoresApp_();
+    var tetoPadrao = fase === 'int' ? 10 : 6;
     return listaServ.map(function(srv) {
       var key = _normServidorNome_(srv.nome);
       var base = mapa[key] || {};
@@ -1929,9 +2213,13 @@ function getCapacidadeApp() {
         linhaSum:  base.linhaSum || '',
         colOutros: fase === 'int' ? 2 : 11,
         total:     base.total || 0,
-        teto:      base.teto || 8,
+        teto:      tetoPadrao,
         pct:       base.pct || 0,
-        status:    base.status || 'Disponível'
+        status:    base.status || 'Disponível',
+        futuros:   0,
+        futurosQtd: 0,
+        projetado: 0,
+        pctProjetado: 0
       };
     });
   }
@@ -1986,9 +2274,10 @@ function getCapacidadeApp() {
 // ── salvarEmailProcesso ───────────────────────────────────────────────────────
 // Grava o EmailRequisitante de um processo na aba fProcessos.
 // params: pid (ProcessoID), email (string)
-function salvarEmailProcesso(pid, email) {
+function salvarEmailProcesso(pid, email, authToken) {
   return _withAppLockResult_('salvar email do requisitante', function() {
     try {
+    _authRequire_(authToken, false);
     var shP = _ss_().getSheetByName(ABA_PROC);
     if (!shP) throw new Error('Aba Processos não encontrada.');
     var lP = _garantirColunas_(shP, 'ProcessoID', ['Setor Requisitante', 'EmailRequisitante']);
@@ -2010,9 +2299,10 @@ function salvarEmailProcesso(pid, email) {
 // ── trocarServidor ────────────────────────────────────────────────────────────
 // Atualiza o servidor responsável de um processo na aba 📊 Capacidade (col A).
 // pid: ProcessoID; novoServidor: nome ou '' para remover.
-function trocarServidor(pid, novoServidor) {
+function trocarServidor(pid, novoServidor, authToken) {
   return _withAppLockResult_('trocar servidor', function() {
     try {
+    _authRequire_(authToken, true);
     var sh = _ss_().getSheetByName('📊 Capacidade');
     if (!sh) throw new Error('Aba Capacidade não encontrada.');
     var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
@@ -2029,6 +2319,7 @@ function trocarServidor(pid, novoServidor) {
         var dv = cell.getDataValidation();
         cell.clearDataValidations().setValue(novoServidor || '');
         if (dv) cell.setDataValidation(dv);
+        _limparCacheCapacidade_();
         return { ok: true };
       }
     }
@@ -2041,9 +2332,10 @@ function trocarServidor(pid, novoServidor) {
 // ── atualizarStatusEtapa ──────────────────────────────────────────────────────
 // Grava o novo status de uma etapa na aba fEtapas sem concluí-la.
 // linha: número 1-based da linha na planilha; novoStatus: string do status.
-function atualizarStatusEtapa(linha, novoStatus) {
+function atualizarStatusEtapa(linha, novoStatus, authToken) {
   return _withAppLockResult_('atualizar status de etapa', function() {
     try {
+    _authRequire_(authToken, false);
     var sh = _ss_().getSheetByName(ABA_ETP);
     if (!sh) throw new Error('Aba Etapas não encontrada.');
     var lE = _lerAba_(sh, 'ProcessoID');
@@ -2060,6 +2352,7 @@ function atualizarStatusEtapa(linha, novoStatus) {
       _setCapacidadeAtivo_(pid, fase, 'Sim');
     }
     _sincronizarCapacidadeComEtapas_();
+    _limparCacheCapacidade_();
     return { ok: true };
     } catch(e) { return { ok: false, erro: e.message }; }
   });
@@ -2071,6 +2364,7 @@ function regredirEtapa(params) {
   return _withAppLockResult_('regredir etapa', function() {
     try {
     params = params || {};
+    _authRequire_(params.authToken, false);
     var pid = String(params.processoId || '').trim();
     var linhaAtual = parseInt(params.linhaEtapaAtual, 10);
     var motivo = String(params.motivo || '').trim();
@@ -2133,6 +2427,7 @@ function regredirEtapa(params) {
     });
 
     _sincronizarCapacidadeComEtapas_();
+    _limparCacheCapacidade_();
     return { ok: true, etapaReaberta: nomeAnterior, etapaAtual: nomeAtual };
   } catch(e) {
     return { ok: false, erro: e.message };
@@ -2144,6 +2439,7 @@ function regredirEtapa(params) {
 function salvarOutrosCap(params) {
   return _withAppLockResult_('salvar outros pontos', function() {
     try {
+    _authRequire_(params && params.authToken, true);
     var sh = _ss_().getSheetByName('📊 Capacidade');
     if (!sh) throw new Error('Aba Capacidade não encontrada.');
     var linha = parseInt(params.linha, 10);
@@ -2158,6 +2454,7 @@ function salvarOutrosCap(params) {
     } else {
       throw new Error('Servidor não informado para salvar Outros.');
     }
+    _limparCacheCapacidade_();
     return { ok: true };
     } catch(e) { return { ok: false, erro: e.message }; }
   });
@@ -2170,11 +2467,29 @@ function salvarOutrosCap(params) {
 function salvarPontuacaoCap(params) {
   return _withAppLockResult_('salvar pontuação de capacidade', function() {
     try {
+    _authRequire_(params && params.authToken, true);
     var sh = _ss_().getSheetByName('📊 Capacidade');
     if (!sh) throw new Error('Aba Capacidade não encontrada.');
-    sh.getRange(params.linha, 7).setValue(params.pts11 || 0);
-    sh.getRange(params.linha, 8).setValue(params.pts12 || 0);
-    sh.getRange(params.linha, 9).setValue(params.pts23 || 0);
+    var p1 = parseFloat(params.pts11) || 0;
+    var p2 = parseFloat(params.pts12) || 0;
+    var p3 = parseFloat(params.pts23) || 0;
+    sh.getRange(params.linha, 7).setValue(p1);
+    sh.getRange(params.linha, 8).setValue(p2);
+    sh.getRange(params.linha, 9).setValue(p3);
+    var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+    var regHdr = -1;
+    for (var r = 0; r < data.length; r++) {
+      var rr = data[r].map(function(c){ return String(c).trim(); });
+      if (rr[0].indexOf('Servidor') >= 0 && rr[2] === 'ProcessoID') { regHdr = r; break; }
+    }
+    if (regHdr >= 0) {
+      var h = data[regHdr].map(function(c){ return String(c).trim(); });
+      var iTotal = h.indexOf('Total');
+      if (iTotal >= 0) sh.getRange(params.linha, iTotal + 1).setValue(p1 + p2 + p3);
+    } else if (sh.getLastColumn() >= 10) {
+      sh.getRange(params.linha, 10).setValue(p1 + p2 + p3);
+    }
+    _limparCacheCapacidade_();
     return { ok: true };
     } catch(e) { return { ok: false, erro: e.message }; }
   });
@@ -2185,7 +2500,7 @@ function salvarPontuacaoCap(params) {
 // Retorna a lista de servidores do setor como array de objetos:
 //   [{nome, cor, isChefe, email}]
 // Lê de PropertiesService (chave SEL_SERVIDORES_JSON). Se não existir, usa padrão.
-function getServidoresApp() {
+function _getServidoresApp_() {
   var props = PropertiesService.getScriptProperties();
   var raw   = props.getProperty('SEL_SERVIDORES_JSON');
   var lista;
@@ -2198,35 +2513,44 @@ function getServidoresApp() {
   if (!lista || !lista.length) {
     // Lista padrão inicial
     lista = [
-      { nome:'Amanda',  cor:'#2563eb', isChefe:true  },
-      { nome:'Beatriz', cor:'#db2777', isChefe:false },
-      { nome:'Bruno',   cor:'#7c3aed', isChefe:false },
-      { nome:'Samuel',  cor:'#d97706', isChefe:true  }
+      { nome:'Amanda',  matricula:'amanda',  cor:'#2563eb', isChefe:true  },
+      { nome:'Beatriz', matricula:'beatriz', cor:'#db2777', isChefe:false },
+      { nome:'Bruno',   matricula:'bruno',   cor:'#7c3aed', isChefe:false },
+      { nome:'Samuel',  matricula:'samuel',  cor:'#d97706', isChefe:true  }
     ];
   }
   // Enriquece com email de PropertiesService ou EMAILS_SEL
   lista.forEach(function(s) {
+    s.matricula = s.matricula || _authMatriculaPadrao_(s.nome);
     s.email = props.getProperty('email_' + s.nome) || _emailServidorFallback_(s.nome) || '';
   });
+  _authSyncServidores_(lista);
   return lista;
 }
 
 // ── salvarServidoresApp ───────────────────────────────────────────────────────
 // Persiste a lista completa de servidores no PropertiesService.
 // lista: [{nome, cor, isChefe}] — e-mails são mantidos separadamente.
-function salvarServidoresApp(lista) {
+function getServidoresApp(authToken) {
+  _authRequire_(authToken, false);
+  return _getServidoresApp_();
+}
+
+function salvarServidoresApp(lista, authToken) {
   return _withAppLockResult_('salvar equipe', function() {
     try {
+    _authRequire_(authToken, true);
     if (!Array.isArray(lista)) throw new Error('Lista inválida.');
     var props = PropertiesService.getScriptProperties();
-    var antiga = getServidoresApp().map(function(s) {
-      return { nome: String(s.nome || '').trim(), cor: s.cor, isChefe: !!s.isChefe };
+    var antiga = _getServidoresApp_().map(function(s) {
+      return { nome: String(s.nome || '').trim(), matricula: String(s.matricula || '').trim(), cor: s.cor, isChefe: !!s.isChefe };
     });
     lista.forEach(function(s) {
       if (!s.nome || !s.nome.trim()) throw new Error('Nome em branco.');
     });
     var limpa = lista.map(function(s) {
-      return { nome: s.nome.trim(), cor: s.cor || '#64748b', isChefe: !!s.isChefe };
+      var nomeLimpo = s.nome.trim();
+      return { nome: nomeLimpo, matricula: _authNorm_(s.matricula || _authMatriculaPadrao_(nomeLimpo)), cor: s.cor || '#64748b', isChefe: !!s.isChefe };
     });
 
     var vistos = {};
@@ -2234,7 +2558,15 @@ function salvarServidoresApp(lista) {
       var k = _normServidorNome_(s.nome);
       if (vistos[k]) throw new Error('Servidor duplicado: ' + s.nome + '.');
       vistos[k] = true;
+      var km = _authNorm_(s.matricula);
+      if (!km) throw new Error('Matrícula em branco para ' + s.nome + '.');
+      if (vistos['mat_' + km]) throw new Error('Matrícula duplicada: ' + s.matricula + '.');
+      vistos['mat_' + km] = true;
     });
+
+    if (!limpa.some(function(s) { return !!s.isChefe; })) {
+      throw new Error('Mantenha ao menos um servidor marcado como chefia.');
+    }
 
     var novos = {};
     limpa.forEach(function(s) { novos[_normServidorNome_(s.nome)] = true; });
@@ -2263,6 +2595,7 @@ function salvarServidoresApp(lista) {
 
     props.setProperty('SEL_SERVIDORES_JSON', JSON.stringify(limpa));
     _salvarServidoresConfigSheet_(limpa);
+    _authSyncServidores_(limpa);
 
     var alterados = 0;
     renomes.forEach(function(rn) {
@@ -2274,32 +2607,42 @@ function salvarServidoresApp(lista) {
     });
     if (renomes.length) _sincronizarCapacidadeComEtapas_();
 
-    return { ok: true, renomes: renomes.length, alterados: alterados };
+    return { ok: true, renomes: renomes.length, alterados: alterados, servidores: _getServidoresApp_() };
     } catch(e) { return { ok: false, erro: e.message }; }
   });
 }
 
 // Retorna {Amanda: email, Beatriz: email, ...} do PropertiesService.
 // Usa lista dinâmica de servidores.
-function getEmails() {
-  var lista = getServidoresApp();
+function getEmails(authToken) {
+  return _getEmails_(_authRequire_(authToken, false));
+}
+
+function _getEmails_(sess) {
+  var lista = _getServidoresApp_();
   var props = PropertiesService.getScriptProperties();
   var emails = {};
   lista.forEach(function(s) {
-    emails[s.nome] = props.getProperty('email_' + s.nome) || _emailServidorFallback_(s.nome) || '';
+    if (sess.isChefe || _normServidorNome_(sess.nome) === _normServidorNome_(s.nome)) {
+      emails[s.nome] = props.getProperty('email_' + s.nome) || _emailServidorFallback_(s.nome) || '';
+    }
   });
   return emails;
 }
 
 // ── salvarEmail ───────────────────────────────────────────────────────────
 // Salva/atualiza o e-mail de um servidor no PropertiesService.
-function salvarEmail(servidor, email) {
+function salvarEmail(servidor, email, authToken) {
   return _withAppLockResult_('salvar email de servidor', function() {
     try {
+    var sess = _authRequire_(authToken, false);
     if (!servidor) throw new Error('Servidor não informado.');
+    if (!sess.isChefe && _normServidorNome_(sess.nome) !== _normServidorNome_(servidor)) {
+      throw new Error('Você só pode alterar o próprio e-mail.');
+    }
     if (email && email.indexOf('@') < 0) throw new Error('E-mail inválido.');
     PropertiesService.getScriptProperties().setProperty('email_' + servidor, email);
-    _salvarServidoresConfigSheet_(getServidoresApp());
+    _salvarServidoresConfigSheet_(_getServidoresApp_());
     return { ok: true };
     } catch(e) { return { ok: false, erro: e.message }; }
   });
@@ -2308,8 +2651,9 @@ function salvarEmail(servidor, email) {
 // ── instalarTriggerAvisos ─────────────────────────────────────────────────
 // Chamada pelo botão "Instalar trigger" no app.
 // Remove trigger anterior (se existir) e instala novo às 10h30 diariamente.
-function instalarTriggerAvisos() {
+function instalarTriggerAvisos(authToken) {
   return _withAppLock_('instalar trigger de avisos', function() {
+    _authRequire_(authToken, true);
     ScriptApp.getProjectTriggers().forEach(function(t) {
       if (t.getHandlerFunction() === 'enviarAvisosPrazo') ScriptApp.deleteTrigger(t);
     });
@@ -2325,8 +2669,9 @@ function instalarTriggerAvisos() {
 
 // ── verificarTriggerAvisos ────────────────────────────────────────────────
 // Informa se o trigger diário de avisos está instalado.
-function verificarTriggerAvisos() {
+function verificarTriggerAvisos(authToken) {
   try {
+    _authRequire_(authToken, false);
     var triggers = ScriptApp.getProjectTriggers();
     var props = PropertiesService.getScriptProperties();
     for (var i = 0; i < triggers.length; i++) {
@@ -2344,11 +2689,15 @@ function verificarTriggerAvisos() {
 }
 
 // Envia um e-mail simples para validar permissões e configuração do MailApp.
-function enviarEmailTesteServidor(servidor) {
+function enviarEmailTesteServidor(servidor, authToken) {
   try {
+    var sess = _authRequire_(authToken, false);
     servidor = String(servidor || '').trim();
     if (!servidor) throw new Error('Servidor não informado.');
-    var emails = getEmails();
+    if (!sess.isChefe && _normServidorNome_(sess.nome) !== _normServidorNome_(servidor)) {
+      throw new Error('Você só pode testar o próprio e-mail.');
+    }
+    var emails = _getEmails_(sess);
     var dest = emails[servidor] || _emailServidorFallback_(servidor) || '';
     if (!dest || dest.indexOf('@') < 0 || dest.indexOf('COLE_') === 0) {
       throw new Error('E-mail de ' + servidor + ' não está cadastrado na Config.');
@@ -2380,6 +2729,7 @@ function enviarEmailTesteServidor(servidor) {
 function atribuirResponsaveisApp(params) {
   return _withAppLockResult_('atribuir responsáveis', function() {
     try {
+    _authRequire_(params && params.authToken, true);
     var ss     = _ss_();
     var pid    = params.pid    || '';
     var servInt = params.servInt || '';
@@ -2454,6 +2804,7 @@ function atribuirResponsaveisApp(params) {
     }
 
     _sincronizarCapacidadeComEtapas_();
+    _limparCacheCapacidade_();
     return { ok: true, avisos: avisos };
     } catch(e) { return { ok: false, erro: e.message }; }
   });

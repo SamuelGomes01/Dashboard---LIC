@@ -1,7 +1,22 @@
 # Plano de Trabalho — Sistema de Contratações CPII
-> Atualizado em: 01/06/2026 — painel público somente leitura, KPI de capacidade interna, locks de escrita e leitura do AppSEL sem efeitos colaterais
+> Atualizado em: 03/06/2026 — login por matrícula/senha, recuperação de senha, KPI de capacidade, avisos de carga futura e preparação para GitHub Pages
 
 ---
+
+## 🛠️ SESSÃO 03/06/2026 — Login, segurança, KPI e capacidade
+
+- KPI público de capacidade corrigido: o AppSEL atualiza a coluna `Total` ao salvar pontuação e o painel público recalcula pelo somatório das colunas de pontos quando `Total` estiver vazio, zerado ou inconsistente.
+- Regra preservada no painel público: capacidade do setor soma somente linhas `Ativo = Sim` da `Fase Interna`; carga futura não entra na barra principal.
+- Login por matrícula + senha substitui a seleção simples de servidor; tentativas de login não criam conta automática.
+- Senhas ficam com hash/salt no Apps Script; chefia pode cadastrar servidor, resetar senha e marcar troca obrigatória.
+- Recuperação de senha por matrícula adicionada na tela de login: envia senha temporária para o e-mail cadastrado, inclusive para chefia. Se não houver e-mail cadastrado e nenhum outro chefe disponível, o dono/admin do Apps Script precisa ajustar o cadastro.
+- Sessão do AppSEL não expira mais por tempo durante o trabalho; o usuário só sai ao clicar em trocar/sair ou se a matrícula for removida da equipe.
+- Botão de novo processo fica oculto na tela de login e aparece apenas para chefia na aba Etapas.
+- Textos de equipe atualizados para `Equipe SEL/SEPMA`.
+- Capacidade: barras continuam mostrando carga ativa; cards e modais mostram reserva futura/projeção quando existir. Tetos usados: fase interna `10 pts`, fase externa `6 pts`; aviso orienta a chefia sem bloquear a atribuição.
+- Segurança reforçada: ações de escrita e leituras internas exigem sessão; servidor comum segue sem acesso a Config/Fila/Histórico.
+- Teste local feito no código-fonte; teste final ainda depende de publicar nova versão no Apps Script e validar em ambiente real.
+- Próximo passo combinado: após validação do AppSEL em uso real, organizar os projetos com extrema calma para uma transição preservada ao GitHub Pages, mantendo separado o app interno, o painel público e tudo que já funciona hoje.
 
 ## ✅ ESTADO ATUAL DO SISTEMA
 
@@ -26,6 +41,7 @@
 ```
 FASE 1 ✅ CONCLUÍDA  → Painel responsivo para mobile (leitura pública)
 FASE 2 ✅ CONCLUÍDA  → App interno dos servidores + alertas por e-mail
+FASE 2.5 (planejada) → Organização dos projetos e transição preservada para GitHub Pages
 FASE 3 (futura)     → Portal de campi / replicação para outros setores
 ```
 
@@ -38,7 +54,7 @@ FASE 3 (futura)     → Portal de campi / replicação para outros setores
 ### Funcionalidades implementadas
 
 #### Autenticação e equipe
-- **Login dinâmico:** botões carregados do GS (via `getServidoresApp()`), com cache no `localStorage`
+- **Login por matrícula e senha:** usuários carregados do cadastro da equipe, com senha temporária, troca obrigatória e recuperação por e-mail
 - **Gerenciamento de equipe** (aba Config, só chefes): add/editar/remover servidores, cor de avatar, flag `isChefe`
 - **Servidores persistidos** no PropertiesService (`SEL_SERVIDORES_JSON`)
 - **Trocar usuário:** corrigido — não usa `location.reload()` (quebrava no GAS), manipula DOM diretamente
@@ -94,7 +110,7 @@ FASE 3 (futura)     → Portal de campi / replicação para outros setores
 
 #### Aba Config
 - Sessão (logado como / trocar usuário)
-- **Equipe do SEL** (novo): gerenciar servidores — add/editar/remover, paleta de 8 cores, flag chefe
+- **Equipe SEL/SEPMA** (novo): gerenciar servidores — add/editar/remover, paleta de 8 cores, flag chefe
 - E-mails dos servidores (cada um edita o próprio)
 - Trigger de avisos automáticos (instalar/confirmar)
 
@@ -477,3 +493,17 @@ Diagnóstico inicial substituído pela correção final abaixo: a Capacidade ago
 
 **Publicação necessária:**
 - Republicar o AppSEL para que o novo texto apareça no painel.
+
+---
+
+## SESSÃO 01/06/2026 — Botão de voltar no detalhe do processo
+
+**Pedido do Samuel:** evitar que o usuário precise descobrir que o menu superior fecha o detalhe do processo.
+
+**Implementado em `AppSEL_index.html`:**
+- Adicionado botão `← Voltar` no cabeçalho do detalhe do processo.
+- O botão fecha o modal e retorna para a lista anterior, usando a mesma função já existente (`fecharProc()`).
+- A mudança melhora a navegação sem alterar filtros, menu inferior ou fluxo de conclusão/status das etapas.
+
+**Publicação necessária:**
+- Republicar o AppSEL para que o botão apareça aos usuários.

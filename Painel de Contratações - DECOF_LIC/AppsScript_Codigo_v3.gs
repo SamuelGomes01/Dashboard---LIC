@@ -2628,17 +2628,10 @@ function onEditAtraso(e) {
 //   Linha  9, coluna D → total de pontos do setor (=SUM(D5:D8))
 //   Linha  9, coluna E → teto total de pontos (=SUM(E5:E8))
 //   Resumo servidores: linhas 5–8 (AMANDA, BEATRIZ, BRUNO, SAMUEL)
-//   Teto individual: 8 pts por servidor
+//   Teto individual: 10 pts por servidor na fase interna
 // ════════════════════════════════════════════════════════════════════════
 function getCapacidade() {
   try {
-    // ── Cache separado para capacidade (TTL 60s — muda com mais frequência) ──
-    var cache = CacheService.getScriptCache();
-    var cached = cache.get('dados_capacidade');
-    if (cached) {
-      try { return JSON.parse(cached); } catch(e) { /* cache corrompido */ }
-    }
-
     var ss = SpreadsheetApp.getActiveSpreadsheet();
 
     // Localiza a aba de Capacidade (aceita nome com ou sem emoji)
@@ -2729,6 +2722,9 @@ function getCapacidade() {
       var iAtivo = hCap.indexOf('Ativo');
       var iFase = hCap.indexOf('Fase da Carga');
       var iTotal = hCap.indexOf('Total');
+      var iP1 = capFindCol_(hCap, ['Modalidade pts', 'Modalidade(pts)', 'Mod pts', 'Mod (pts)', '1.1', '2.1']);
+      var iP2 = capFindCol_(hCap, ['Natureza pts', 'Natureza(pts)', 'Nat pts', 'Nat (pts)', '1.2', '2.2']);
+      var iP3 = capFindCol_(hCap, ['Sessao pts', 'Sessao(pts)', 'Sessão pts', 'Sess pts', 'Sess (pts)', 'IRP', '2.3']);
       for (var pr = regHdr + 1; pr < dados.length; pr++) {
         var rowCap = dados[pr];
         var servCap = iServ >= 0 ? String(rowCap[iServ] || '').trim() : String(rowCap[0] || '').trim();
@@ -2738,7 +2734,11 @@ function getCapacidade() {
         if (faseCap.indexOf('EXTERNA') >= 0) continue;
         // Soma somente a carga interna ativa. A fase externa segue controlada
         // internamente no AppSEL, sem inflar o indicador público.
-        processosPts += iTotal >= 0 ? parseNumCap_(rowCap[iTotal]) : 0;
+        var totalLinha = iTotal >= 0 ? parseNumCap_(rowCap[iTotal]) : 0;
+        var somaPts = (iP1 >= 0 ? parseNumCap_(rowCap[iP1]) : 0)
+          + (iP2 >= 0 ? parseNumCap_(rowCap[iP2]) : 0)
+          + (iP3 >= 0 ? parseNumCap_(rowCap[iP3]) : 0);
+        processosPts += somaPts > 0 && Math.abs(somaPts - totalLinha) > 0.001 ? somaPts : totalLinha;
         if (usarServidoresDoRegistro) servidoresResumo[capNorm_(servCap)] = true;
       }
     }
@@ -2776,9 +2776,6 @@ function getCapacidade() {
       tetoPts:  tetoPts,
       fase:     'interna'
     };
-
-    // Cache por 60 segundos
-    try { cache.put('dados_capacidade', JSON.stringify(retorno), 60); } catch(e) {}
 
     return retorno;
 

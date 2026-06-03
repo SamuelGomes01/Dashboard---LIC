@@ -10,8 +10,8 @@ O sistema tem dois módulos principais:
 
 | Módulo | Arquivos | Uso |
 |---|---|---|
-| App interno de gestão de etapas | `Web app/AppSEL_Codigo.gs` + `Web app/AppSEL_index.html` | Uso da equipe do SEL para fila, etapas, responsáveis, capacidade, histórico, configuração e e-mails |
-| Painel público/Gantt | `Web app/AppsScript_Codigo_v3.gs` + `Web app/AppsScript_index.html` | Consulta gerencial e visualização do cronograma, sem edição direta dos dados |
+| App interno de gestão de etapas | `AppSEL - DECOF_LIC/AppSEL_Codigo.gs` + `AppSEL - DECOF_LIC/AppSEL_index.html` | Uso da equipe SEL/SEPMA para fila, etapas, responsáveis, capacidade, histórico, configuração e e-mails |
+| Painel público/Gantt | `Painel de Contratações - DECOF_LIC/AppsScript_Codigo_v3.gs` + `Painel de Contratações - DECOF_LIC/AppsScript_index.html` | Consulta gerencial e visualização do cronograma, sem edição direta dos dados |
 
 A planilha funciona como base de dados. O Apps Script lê e atualiza as abas da planilha, calcula prazos em dias úteis, publica a interface web e executa os gatilhos automáticos.
 
@@ -45,19 +45,23 @@ Os avisos são enviados pela função `enviarAvisosPrazo()` no Apps Script.
 
 Depois de publicar uma nova versão do AppSEL, entre na aba **Config** e use **Reinstalar trigger** para atualizar o gatilho e registrar os metadados de horário/fuso. O Apps Script não garante o minuto exato do disparo, mas `atHour(10).nearMinute(30)` orienta o envio para a janela das 10h30.
 
+## Primeiro Acesso ao AppSEL
+
+O AppSEL usa login por matrícula e senha. A chefia cadastra os servidores na aba **Config**; tentativas de login não criam contas automaticamente. Para servidores já cadastrados, a senha temporária inicial ou resetada pela chefia é `123456`; o botão **Esqueci minha senha** envia uma senha temporária por e-mail. Nos dois casos, há troca obrigatória no próximo acesso.
+
 ## Estrutura do Repositório
 
 ```text
 .
 ├── README.md
-├── Web app/
+├── AppSEL - DECOF_LIC/
 │   ├── AppSEL_Codigo.gs
-│   ├── AppSEL_index.html
+│   └── AppSEL_index.html
+├── Painel de Contratações - DECOF_LIC/
 │   ├── AppsScript_Codigo_v3.gs
 │   ├── AppsScript_index.html
-│   ├── CronogramaContratacoes_CPII (9).xlsx
-│   └── PLANO_DIARIO (1).md
-└── Nota_tecnica_Painel_CPII_v4.docx
+│   └── CronogramaContratacoes_CPII (10).xlsx
+└── PLANO_DIARIO_PROJETOS.md
 ```
 
 Arquivos de planilha, documentos e nomes podem variar entre versões locais. Antes de publicar no GitHub, revise dados reais, links internos, e-mails pessoais e documentos administrativos que não devam ficar públicos.
@@ -80,8 +84,8 @@ O código localiza muitas colunas pelo nome do cabeçalho. Ao adaptar para outro
 
 1. Abra a planilha no Google Sheets.
 2. Acesse **Extensões > Apps Script**.
-3. Atualize o arquivo principal com o conteúdo de `Web app/AppSEL_Codigo.gs`.
-4. Crie ou atualize o arquivo HTML `index` com o conteúdo de `Web app/AppSEL_index.html`.
+3. Atualize o arquivo principal com o conteúdo de `AppSEL - DECOF_LIC/AppSEL_Codigo.gs`.
+4. Crie ou atualize o arquivo HTML `index` com o conteúdo de `AppSEL - DECOF_LIC/AppSEL_index.html`.
 5. Salve o projeto.
 6. Publique em **Implantar > Gerenciar implantações > Nova versão**.
 7. Abra o Web App publicado.
@@ -90,7 +94,7 @@ O código localiza muitas colunas pelo nome do cabeçalho. Ao adaptar para outro
 
 ## Implantação do Painel Público
 
-O painel público usa os arquivos `AppsScript_Codigo_v3.gs` e `AppsScript_index.html`. Ele deve ser mantido separado do AppSEL quando a unidade quiser oferecer uma visualização de consulta sem recursos internos de edição.
+O painel público usa os arquivos `Painel de Contratações - DECOF_LIC/AppsScript_Codigo_v3.gs` e `Painel de Contratações - DECOF_LIC/AppsScript_index.html`. Ele deve ser mantido separado do AppSEL quando a unidade quiser oferecer uma visualização de consulta sem recursos internos de edição.
 
 Ao publicar o painel público, revise:
 
