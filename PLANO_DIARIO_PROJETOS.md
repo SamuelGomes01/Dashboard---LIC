@@ -1,5 +1,123 @@
 # Plano de Trabalho — Sistema de Contratações CPII
-> Atualizado em: 03/06/2026 — login por matrícula/senha, recuperação de senha, KPI de capacidade, avisos de carga futura e preparação para GitHub Pages
+> Atualizado em: 04/06/2026 (tarde) - corrigido timeout que derrubou App Gestao e Painel apos os feriados municipais
+
+---
+
+## 🐛 SESSAO 04/06/2026 (tarde) — CORRECAO DO TIMEOUT pos-feriados ("Tempo esgotado ao comunicar com o Apps Script")
+
+**Sintoma:** depois da atualizacao que adicionou os feriados municipais (aba `Calendario` + leitura do calendario nos scripts), TANTO o Painel de Contratacoes (DECOF-LIC) QUANTO o App Gestao passaram a exibir `Erro ao carregar: Tempo esgotado ao comunicar com o Apps Script`.
+
+**Diagnostico (com evidencia real do navegador):**
+- A planilha e a aba `Calendario` (16 linhas, 7 colunas) estao **integras** — nao era problema de dados, volume nem formula.
+- Capturando a rede do Painel ao vivo: a rota `route=painel.capacidade` respondeu **200 OK**, mas `route=painel.dados` ficou **pendente / sem retorno** (timeout). A diferenca: `painel.dados` monta a **cascata de datas** (dias uteis + feriados) e `painel.capacidade` nao.
+- **Causa-raiz:** a funcao que le o municipio do calendario (`calMunicipio_()` no Painel / `_calMunicipio_()` no App Gestao) chamava `PropertiesService.getScriptProperties().getProperty(...)` **ANTES** da verificacao de cache, ou seja, **a cada chamada de `isDiaUtil()` / `_isFer_()`**. Como a cascata percorre dia a dia dezenas de processos por varios meses, isso disparava **dezenas de milhares** de leituras do PropertiesService por requisicao — lento e com cota — estourando o tempo de execucao do Apps Script. Os dois apps quebraram juntos porque os dois ganharam esse mesmo codigo de calendario na mesma atualizacao.
+
+**Correcao aplicada (minima e identica nos dois projetos):**
+- Memoizado o municipio em variavel de modulo (`CALENDARIO_MUNICIPIO_MEMO` / `_CALENDARIO_MUNICIPIO_MEMO`): o `getProperty` passa a rodar **no maximo uma vez por execucao**, em vez de uma vez por dia iterado. Comportamento dos prazos e feriados permanece **identico**; muda so o desempenho.
+- Arquivos: `painel-contratacoes-decof/.../apps-script/Code.gs` e `app_gestao-reitoria/.../apps-script/Code.gs`.
+- Sintaxe validada (`node --check`) sobre a reconstrucao a partir do HEAD do git + a edicao: **OK** nos dois.
+
+**Observacao tecnica:** durante a edicao, o espelho de leitura do shell (mount) ficou servindo um snapshot desatualizado/truncado dos arquivos; a ferramenta de arquivos (autoritativa) confirmou que os dois arquivos estao **integros**, com a edicao aplicada e o final de `getCapacidade()` / da ultima funcao preservado. `node --check` foi feito sobre a versao reconstruida do git HEAD para nao depender do mount.
+
+**Publicacao necessaria (Samuel):**
+- Colar o `apps-script/Code.gs` do **Painel** no Apps Script do Painel → salvar → **Implantar nova versao** (Gerenciar implantacoes).
+- Colar o `apps-script/Code.gs` do **App Gestao** no Apps Script do App Gestao → salvar → **Implantar nova versao**.
+- Testar: abrir o Painel (deve carregar a tabela/Gantt) e abrir o App Gestao (aba Etapas) sem o erro de tempo esgotado.
+
+**CONFIRMADO pelo Samuel:** correcao do timeout funcionou apos republicar. ✅
+
+**Ajuste de UI no App Gestao (mesma sessao):** o motivo de atraso aparecia cortado no card da etapa — estava truncado em **90 caracteres** (`et.motivo.substring(0,90)` no `index.html`, ~linha 1604). Alinhado ao **mesmo limite do Painel (200 caracteres + `…`)**, que usa `MOTIVO_MAX = 200`. Como o motivo digitado ja e limitado a 300 chars na entrada, na pratica quase sempre aparece inteiro. So o `index.html` do App Gestao mudou; nao precisa mexer no Apps Script. Sintaxe do JS validada (`node --check`) ✅. **Pendencia Samuel:** republicar o `index.html` do App Gestao no GitHub Pages.
+
+---
+
+## SESSAO 03/06/2026 — Transicao preservada para GitHub Pages
+
+**Decisoes consolidadas:**
+- Painel de Contratacoes e AppSEL ficarao em **repositorios separados**, cada um com seu proprio GitHub Pages.
+- Cada projeto tambem tera seu **proprio Apps Script**. A decisao foi manter scripts separados porque o AppSEL tem muitas linhas, login, escrita, e-mails, trigger e regras internas; misturar com o painel aumentaria o risco.
+- O campo `Custom domain` do GitHub Pages deve ficar vazio enquanto nao houver dominio institucional real com DNS configurado. O nome amigavel sera controlado pelo nome do repositorio.
+
+**Painel de Contratacoes — etapa concluida:**
+- Repositorio institucional renomeado para `painel-contratacoes-reitoria`.
+- URL esperada do GitHub Pages: `https://decofcp2-afk.github.io/painel-contratacoes-reitoria/`.
+- GitHub Pages configurado em `main` + `/(root)`.
+- Painel migrado para pagina estatica (`index.html`) com `config.js` apontando para a URL `/exec` do Apps Script.
+- Backend do painel preparado como Apps Script somente leitura, com rotas:
+  - `?route=painel.dados`
+  - `?route=painel.capacidade`
+- Resultado observado pelo Samuel: painel aparentemente mais rapido e sem depender do `google.script.run`/HTMLService para renderizar a tela, reduzindo incompatibilidades de navegador.
+- README do painel atualizado para "Painel de Contratacoes da Reitoria", com orientacao de repositorio separado, Pages em root, Apps Script proprio, conexao com o App Gestao e dicas para adaptar para outros campi.
+
+**App Gestao/AppSEL - transicao iniciada em pasta separada:**
+- Criada e movida a pasta local do app para `C:\Users\Samuel Gomes\Desktop\app_gestao-reitoria\app_gestao-reitoria`, para virar repositorio proprio do App Gestao/AppSEL, separado do painel.
+- A pasta recebeu `index.html`, `config.js`, `.gitignore`, `README.md`, `CHECKLIST_PUBLICACAO.md` e `apps-script/Code.gs`.
+- O `index.html` ganhou uma ponte compativel com as chamadas atuais do app. Assim, as telas e funcoes existentes continuam usando o mesmo padrao interno, mas no GitHub Pages a ponte chama o Apps Script por JSONP.
+- Login e troca obrigatoria de senha foram tratados com fluxo especial: a senha digitada nao deve ir aberta na URL; o navegador calcula hash/prova com `crypto.subtle` e o Apps Script valida por desafio temporario.
+- O `Code.gs` do AppSEL ganhou rotas:
+  - `?route=appsel.challenge`
+  - `?route=appsel.loginProof`
+  - `?route=appsel.changePasswordHash`
+  - `?route=appsel.call&method=...`
+- Dados sensiveis foram removidos da pasta nova: sem ID real da planilha e sem e-mail pessoal.
+- Ponte do AppSEL ajustada com `apiTimeoutMs: 90000`, `referrerPolicy: no-referrer` e resposta JSONP protegida contra separadores Unicode raros vindos da planilha.
+- Checklist de publicacao/testes criada dentro da pasta do AppSEL para orientar a criacao do Apps Script, GitHub Pages e validacoes em Chrome/Edge/anonima.
+- Sintaxe validada localmente no runtime interno: `apps-script/Code.gs` e script interno do `index.html` passaram.
+- Repositorio local atual do app confirmado em `C:\Users\Samuel Gomes\Desktop\app_gestao-reitoria\app_gestao-reitoria`.
+- Novo fluxo operacional adicionado: chefia pode devolver processo em andamento para a Fila com justificativa obrigatoria, sem trocar o status real do processo/etapa.
+- O retorno para fila e marcado no motivo da etapa com `RETORNO PARA FILA`; D0, status atual e etapas concluidas ficam preservados, a capacidade e desativada e os avisos de atraso deixam de ser enviados enquanto o processo estiver na fila.
+- A aba Fila agora lista processos sem D0, processos em planejamento e processos marcados como retorno para fila; ao iniciar/reativar, o processo volta para `Em andamento`.
+- Ajuste de usabilidade: o seletor de status da etapa ganhou botao `Voltar`, para fechar sem salvar quando o status atual ja estiver correto.
+- Tratamento de legado: App Gestao e Painel passam a ignorar `DataRealizacao` e `MotivoAtraso` preenchidos manualmente em etapas que ainda nao estao `Concluida`; a celula permanece na planilha, mas nao contamina tela, calculo ou tooltip.
+- Metadados e icones adicionados ao App Gestao e ao Painel para melhorar aba do navegador e preview ao compartilhar links.
+- README e checklist do App Gestao atualizados para incluir o teste de retorno para fila e reativacao.
+- Sessao do App Gestao ajustada para durar somente enquanto a aba do navegador estiver aberta: recarregar a pagina mantem o login, mas fechar a aba/navegador exige novo login.
+- Capacidade passa a ser atualizada em segundo plano apos concluir etapa, regredir etapa ou devolver processo para fila, sem depender de recarregar a pagina.
+- App Gestao ganhou tela neutra de carregamento na restauracao da sessao, evitando que a tela de login apareca rapidamente ao recarregar a pagina.
+- App Gestao passa a pre-carregar a aba Capacidade logo apos login/restauracao de sessao, reduzindo a espera quando o usuario abrir a aba.
+- Correcao importante da pre-carga: ao abrir a aba Capacidade, se os dados ja tiverem sido carregados em segundo plano, o app agora renderiza imediatamente os cards e processos, sem depender de trocar entre Fase Interna/Fase Externa.
+- Painel reforcado para exibir motivo de atraso apenas quando vier de etapa concluida com atraso real; motivos antigos em etapas em andamento, "A verificar" e marcacoes de retorno para fila nao aparecem no tooltip.
+- Validacao local feita nos dois projetos apos esses ajustes: `index.html` do App Gestao, `index.html` do Painel e respectivos `apps-script/Code.gs` passaram na checagem de sintaxe.
+- Datas de etapas concluidas ajustadas para leitura mais clara: o prazo oficial continua em `Prazo 638/2026`; quando houver atraso, o Painel exibe `Periodo realizado` do dia seguinte ao vencimento ate a data realizada; quando nao houver atraso, exibe apenas `Realizado em`. No App Gestao, a exibicao atual foi mantida conforme validado em uso.
+- Aba Fila do App Gestao ganhou destaque de orientacao com titulo `Gestao da fila`, explicando prioridade, D0, responsaveis, edicao de nome e inicio/reativacao.
+- Chefia pode editar o nome/objeto de processos enquanto estiverem na Fila; a alteracao grava na aba Processos e reflete no App Gestao e no Painel.
+- Rotulo de processos/etapas em planejamento no Painel simplificado para `A iniciar`, evitando confusao com `Fila de Prioridade`.
+- Painel ajustado para expandir/recolher etapas ao clicar tambem na area do nome do processo, mantendo o botao `+` como alternativa.
+- Auditoria geral de 04/06/2026: App Gestao e Painel passaram na checagem de sintaxe local; rotas/API principais conferidas; Painel segue sem dependencia de `google.script.run`.
+- Correcao encontrada na auditoria: a tela de conclusao do App Gestao calculava atraso por dias corridos; foi ajustada para contar dias uteis, igual ao Apps Script e ao Painel.
+- Cenarios de prazo validados localmente: prazo no mesmo dia, conclusao antecipada, sexta para segunda, fim de semana, feriado nacional fixo e avancos por dias uteis.
+- Calendario de feriados oficiais implementado no App Gestao e no Painel:
+  - nova aba esperada: `Calendario`;
+  - a planilha do Samuel ja recebeu a aba importada como `calendario`;
+  - os scripts foram ajustados para reconhecer `calendario`/`Calendario`, sem depender de maiuscula/minuscula;
+  - colunas: `Data`, `Nome`, `Tipo`, `Municipio`, `AfetaPrazo`, `Fonte`, `Observacao`;
+  - `Tipo` precisa conter `Feriado`;
+  - `AfetaPrazo` precisa ser `Sim`;
+  - `Municipio = TODOS` vale para feriados nacionais/estaduais;
+  - municipio especifico vale para feriados locais da unidade.
+- Criado arquivo auxiliar para importacao da aba:
+  - `C:\Users\Samuel Gomes\Desktop\Dashboard - LIC\calendario-feriados-cpii-2026.csv`;
+  - Samuel importou o CSV no Google Sheets, mantendo apenas a aba de calendario no arquivo principal.
+- Pontos facultativos ficaram fora da regra atual. Mesmo se cadastrados como `Ponto facultativo`, o codigo ignora essas linhas para evitar distorcao nos prazos.
+- Fallback preservado: se a aba `Calendario` nao existir ou estiver vazia, continuam valendo sabados, domingos e feriados nacionais fixos ja existentes.
+- Configuracoes novas:
+  - App Gestao: `SEL_MUNICIPIO_CALENDARIO` nas propriedades do Apps Script e `municipioCalendario` no `config.js`.
+  - Painel: `PAINEL_MUNICIPIO_CALENDARIO` nas propriedades do Apps Script.
+- Correcao da aba Capacidade do App Gestao: processos com nome/objeto alterado na Fila agora sao exibidos na Capacidade com o nome atual da aba Processos, mesmo que a tabela de Capacidade tenha texto antigo.
+- Ao salvar novo nome pela Fila, o App tambem tenta atualizar a coluna de objeto da aba Capacidade e limpa o cache da capacidade.
+- Pesquisa inicial de feriados oficiais iniciada:
+  - nacionais: Gov.br/MGI;
+  - estaduais do RJ: ALERJ/Lei RJ 5.645/2010 e normas relacionadas;
+  - municipais: confirmar em fonte oficial da prefeitura/diario oficial de cada municipio antes de cadastrar.
+
+**Ponto de retomada - proximos passos do App Gestao:**
+- Copiar `app_gestao-reitoria/apps-script/Code.gs` para um Apps Script novo da conta DECOF.
+- Configurar `SEL_SS_ID` nas propriedades do script com o ID real da planilha e, se necessario, `SEL_CHEFIA_EMAIL`.
+- Configurar `SEL_MUNICIPIO_CALENDARIO` no Apps Script do App Gestao e `PAINEL_MUNICIPIO_CALENDARIO` no Apps Script do Painel, conforme municipio da unidade.
+- Conferir se a aba `calendario` importada ficou preservada na planilha principal e manter apenas feriados oficiais com `AfetaPrazo = Sim`.
+- Implantar o Apps Script como Web App executando como `Eu`, acesso `Qualquer pessoa`, e copiar a URL `/exec`.
+- Colar a URL em `app_gestao-reitoria/config.js`.
+- Publicar o repositorio separado do App Gestao no GitHub Pages em `main` + `/(root)`.
+- Testar login, troca obrigatoria, recuperacao de senha, etapas, concluir etapa, regredir etapa, devolver processo para fila, reativar processo retornado, capacidade, historico, configuracoes, e-mails e trigger diario.
 
 ---
 
