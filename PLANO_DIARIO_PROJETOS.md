@@ -1,5 +1,44 @@
 # Plano de Trabalho — Sistema de Contratações CPII
-> Atualizado em: 04/06/2026 (tarde) - corrigido timeout que derrubou App Gestao e Painel apos os feriados municipais
+> Atualizado em: 04/06/2026 (tarde) - correcao Edge mobile aplicada no Painel e no App Gestao
+
+---
+
+## SESSAO 04/06/2026 (tarde) — CORRECAO EDGE MOBILE NO PAINEL E APP GESTAO
+
+**Problema observado:** no Microsoft Edge para celular, o Painel de Contratacoes e o App Gestao exibiam erro ao carregar a resposta do Apps Script, enquanto os mesmos links funcionavam no Chrome mobile. O Dashboard Financeiro funcionava no Edge mobile mesmo usando Apps Script.
+
+**Diagnostico atual:** a causa mais provavel nao e a meta tag `maximum-scale=1`, porque o Painel usa viewport normal e falha mesmo assim. A diferenca tecnica relevante e a camada de comunicacao: Painel e App Gestao usavam JSONP direto, injetando `<script src="https://script.google.com/...">`; o Dashboard Financeiro usa `fetch`. Os endpoints dos dois Apps Scripts respondem em JSON comum com CORS liberado e redirecionam para `script.googleusercontent.com`, o que combina com bloqueio do Edge mobile ao carregar script de terceiro.
+
+**Ajuste aplicado com cautela no Painel:** o `index.html` do Painel foi alterado para tentar primeiro `fetch` com JSON comum e manter JSONP como fallback. Como o Painel e somente leitura, esse teste nao grava nem altera dados da planilha.
+
+**Validacao do Painel:** Samuel publicou/testou no Edge mobile e confirmou que resolveu.
+
+**Ajuste aplicado no App Gestao:** o `index.html` do App Gestao recebeu a mesma estrategia: primeiro `fetch` com JSON comum; JSONP antigo permanece como fallback. Para reduzir risco operacional, o fallback automatico foi limitado a login/leituras (`get*`, `verificar*`, `validar*`). Chamadas de gravacao nao sao repetidas automaticamente caso o `fetch` falhe, evitando duplicidade em acoes como concluir, regredir, iniciar processo ou salvar configuracoes.
+
+**Validacao local:** o JavaScript embutido do App Gestao compilou com sucesso em `vm.Script`; `git diff --check` passou. Nao houve alteracao no `apps-script/Code.gs`.
+
+**Pendente Samuel:** publicar o `index.html` atualizado do App Gestao no GitHub Pages e testar no Edge mobile: login, carregar Etapas, abrir Capacidade e fazer uma acao simples controlada somente depois de confirmar que as leituras carregaram.
+
+---
+
+## SESSAO 04/06/2026 (tarde) — AJUSTE DOS AVISOS POR E-MAIL
+
+**Problema observado:** os avisos automaticos estavam sendo enviados tanto pela conta pessoal (`casar70`) quanto pela conta institucional da DECOF. A causa era a existencia de dois acionadores para `enviarAvisosPrazo`: um pertencente ao usuario pessoal e outro pertencente a outro usuario/conta.
+
+**Decisao operacional:** em producao, os acionadores de aviso devem ser instalados somente pela conta institucional da DECOF. O remetente dos e-mails no Apps Script e a conta que possui/executa o acionador; o codigo nao consegue transformar um acionador pessoal em envio institucional.
+
+**Acoes aplicadas:**
+- Samuel excluiu o acionador pessoal (`Pertence a: Eu`) no Apps Script.
+- `apps-script/Code.gs` do App Gestao passou a criar acionadores semanais apenas de segunda a sexta-feira, separados em dois lotes: prazos proximos por volta de 10h30 e etapas vencidas por volta de 14h.
+- Quando houver e-mail do requisitante cadastrado, ele acompanha o lote correspondente: 10h30 nos avisos de prazo proximo e 14h nos avisos de etapa vencida.
+- `enviarAvisosPrazo()` ganhou trava interna: mesmo se algum acionador for criado incorretamente no fim de semana, a rotina retorna sem enviar e-mail aos sabados e domingos.
+- Tela de Configuracoes, README e checklist foram atualizados para orientar que o acionador deve ser instalado/reinstalado pela conta DECOF.
+
+**Publicacao necessaria:** colar o `apps-script/Code.gs` atualizado no Apps Script do App Gestao, salvar, implantar nova versao e clicar em `Reinstalar trigger` estando logado na conta DECOF. Depois conferir em `Acionadores` que nao ha acionador restante da conta pessoal.
+
+**Validacao feita pelo Samuel:** trigger reinstalado e teste de e-mail executado com sucesso pela conta institucional `decof.cp2@gmail.com`. A tela de Config confirmou o teste enviado, e o e-mail recebido saiu pelo remetente institucional. Com isso, a duplicidade de disparo pela conta pessoal foi resolvida na pratica.
+
+**Proxima recomendacao:** propor ao diretor um piloto operacional de 1 a 2 meses na Reitoria antes de expandir para outros campi. Durante o piloto, observar principalmente: carregamento no Chrome/Edge/celular, login e recuperacao de senha, conclusao/regressao de etapas, retorno para fila, capacidade, avisos por e-mail, prazos com feriados e qualidade dos dados preenchidos pelos usuarios.
 
 ---
 
@@ -117,7 +156,7 @@
 - Implantar o Apps Script como Web App executando como `Eu`, acesso `Qualquer pessoa`, e copiar a URL `/exec`.
 - Colar a URL em `app_gestao-reitoria/config.js`.
 - Publicar o repositorio separado do App Gestao no GitHub Pages em `main` + `/(root)`.
-- Testar login, troca obrigatoria, recuperacao de senha, etapas, concluir etapa, regredir etapa, devolver processo para fila, reativar processo retornado, capacidade, historico, configuracoes, e-mails e trigger diario.
+- Testar login, troca obrigatoria, recuperacao de senha, etapas, concluir etapa, regredir etapa, devolver processo para fila, reativar processo retornado, capacidade, historico, configuracoes, e-mails e avisos em dois horarios.
 
 ---
 
@@ -233,7 +272,7 @@ FASE 3 (futura)     → Portal de campi / replicação para outros setores
 - Trigger de avisos automáticos (instalar/confirmar)
 
 #### Avisos por e-mail (`enviarAvisosPrazo`)
-- **Trigger diário às 10h30**
+- **Triggers de segunda a sexta: prazos proximos as 10h30 e etapas vencidas as 14h**
 - **3 dias úteis** de antecedência (era 4)
 - **Dois tipos de aviso:**
   - Prazo próximo (vence em ≤ 3 dias úteis)
@@ -428,9 +467,9 @@ Diagnóstico inicial substituído pela correção final abaixo: a Capacidade ago
 ## 🛠️ SESSÃO 31/05/2026 — Trigger, e-mail e avisos do AppSEL
 
 **Ajustes aplicados no app de gestão de etapas:**
-1. **Status persistente do trigger na Config:** a aba Config agora chama `verificarTriggerAvisos()` ao abrir/recarregar. Se o gatilho diário existir, o botão muda para `Reinstalar trigger` e exibe `Trigger instalado`, em vez de voltar para `Instalar trigger`.
+1. **Status persistente dos triggers na Config:** a aba Config agora chama `verificarTriggerAvisos()` ao abrir/recarregar. Se os acionadores existirem, o botao muda para `Reinstalar trigger` e exibe `Trigger instalado`, em vez de voltar para `Instalar trigger`.
 2. **Instalação do trigger com metadados:** `instalarTriggerAvisos()` passa a registrar hora, fuso e timestamp em `PropertiesService`, permitindo diagnóstico visual na Config.
-3. **Disparo mais próximo das 10h30:** o trigger usa `atHour(10).nearMinute(30)`. O Apps Script ainda pode variar alguns minutos, mas a janela fica mais explícita.
+3. **Disparos agendados:** regra historica ajustada depois para dois lotes: prazos proximos perto de 10h30 e etapas vencidas perto de 14h. O Apps Script ainda pode variar alguns minutos.
 4. **Teste de e-mail na Config:** novo botão `Testar e-mail` envia uma mensagem simples para o servidor logado, validando permissões do `MailApp` e o e-mail cadastrado.
 5. **Banner amarelo simplificado:** no filtro `Todos`, o texto agora informa apenas a quantidade de processos com etapas vencidas; no filtro individual, não repete o nome do servidor selecionado.
 6. **Regra visual alinhada ao envio:** a tela passou a considerar etapa vencida pela data final (`fim_iso`) da etapa, a mesma referência usada por `enviarAvisosPrazo()`. Isso evita a tela prometer e-mail quando o backend ainda não classificaria a etapa como vencida.
@@ -438,7 +477,7 @@ Diagnóstico inicial substituído pela correção final abaixo: a Capacidade ago
 8. **Texto do banner geral:** no filtro `Todos`, o aviso passa a iniciar com `Atenção:`.
 9. **Pontuação guiada sem seleção visual duplicada:** o modal de pontuação da Capacidade agora seleciona apenas uma opção por grupo mesmo quando duas alternativas têm a mesma pontuação. Em Modalidade, usa o texto real do processo para distinguir `Contratação Direta/Dispensa` de `Inexigibilidade`.
 10. **Regra de envio por status:** processos suspensos/paralisados não enviam e-mail; processos em `Aguardando requisitante` enviam somente ao setor requisitante cadastrado. Se o e-mail do requisitante estiver vazio, não há disparo enquanto o processo permanecer nesse status.
-11. **Horário do trigger:** avisos automáticos alterados para 10h30.
+11. **Horario dos triggers:** regra atual usa dois horarios, 10h30 para prazos proximos e 14h para etapas vencidas.
 12. **Status Suspenso normalizado:** `_normStatus_()` agora trata `Suspenso` como status parado (`paralisado` internamente), garantindo que tela e e-mails bloqueiem avisos para esses processos.
 13. **Perfil visual por tipo de usuário:** chefia continua vendo Etapas, Fila, Capacidade, Histórico e Config. Servidores sem flag de chefia veem somente Etapas e Capacidade; Fila, Histórico, Config e cadastro de novo processo ficam ocultos para reduzir confusão operacional.
 14. **E-mails editáveis pela chefia:** como servidores comuns não acessam mais Config, usuários com flag de chefia podem editar o e-mail de qualquer servidor na aba Config.
