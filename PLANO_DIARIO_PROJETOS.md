@@ -1,5 +1,178 @@
 # Plano de Trabalho — Sistema de Contratações CPII
-> Atualizado em: 04/06/2026 (tarde) - correcao Edge mobile aplicada no Painel e no App Gestao
+> Atualizado em: 05/06/2026 (noite) - App Gestao: central por perfil, modo offline, menu do Painel e PWA sem avisos nativos
+
+---
+
+## SESSAO 05/06/2026 (noite) - APP GESTAO: CENTRAL, OFFLINE E MENU DO PAINEL
+
+**Decisao revisada:** foi removida a permissao de notificacao nativa do navegador/aparelho. O App Gestao continua instalavel como PWA no celular e no computador, mas sem pedir autorizacao para avisos do sistema. A estrategia final fica mais limpa: e-mails diarios uteis + Central de Notificacoes interna.
+
+**Ajustes aplicados no App Gestao:**
+- Removido o fluxo `Ativar avisos no aparelho`, incluindo pedido de permissao do navegador, registro de dispositivo PWA, aba `__pwa_dispositivos`, e-mail de ativacao e tratamento de clique em notificacao no service worker.
+- O PWA permanece instalavel via `manifest.json` + `sw.js`; o cache do service worker foi atualizado para `app-gestao-reitoria-v4`.
+- Menu lateral reorganizado na ordem final: `Trocar usuario` -> `Painel de Contratacoes` -> `Configuracoes`.
+- Link do Painel de Contratacoes foi movido para o menu do usuario, evitando aperto no topo em telas mobile. A URL ficou configuravel em `config.js` por `painelUrl`.
+- Ajuste posterior no link do Painel: o clique agora abre somente uma nova aba, mantendo o App Gestao aberto na aba atual.
+- O item `Painel de Contratacoes` passou a usar o mesmo icone SVG do Painel publico, para facilitar a identificacao visual.
+- Adicionado modo offline: quando nao houver conexao, o app abre em consulta somente leitura com os ultimos dados salvos no aparelho; acoes de gravacao ficam bloqueadas ate a conexao voltar.
+
+**Regra final da Central de Notificacoes:**
+- Servidor comum ve alertas somente dos seus processos, para etapas vencidas ou com prazo proximo.
+- Se o processo/etapa estiver em `Aguardando requisitante`, esse alerta nao aparece para o servidor comum.
+- Chefia ve a central completa da equipe, incluindo casos em `Aguardando requisitante`, pois pode cobrar o setor requisitante quando necessario.
+- Etapa vencida nao some da central apenas por estar `Em andamento`; ela permanece ate ser concluida.
+- Processos em planejamento/fila/retorno continuam fora da central operacional de prazos, como antes.
+
+**Regra final dos e-mails:**
+- Avisos normais de prazo continuam indo ao servidor responsavel e a chefia conforme a regra ja existente.
+- Nos casos de `Aguardando requisitante`, o e-mail vai para a chefia e para o requisitante, mas nao para o servidor comum.
+
+**Validacao realizada:**
+- `index.html`, `config.js`, `sw.js` e `apps-script/Code.gs` compilaram sem erro nos scripts.
+- `git diff --check` passou no repositorio do App Gestao.
+- Teste simulado confirmou a regra: chefe recebe alerta normal + aguardando requisitante + processos da equipe; servidor comum recebe apenas o alerta proprio que nao esta aguardando requisitante.
+- Nao foi possivel validar visualmente pelo navegador nesta sessao porque a ferramenta de navegador nao estava disponivel no ambiente; a validacao ficou concentrada em sintaxe, regras e consistencia dos arquivos.
+
+**Publicacao necessaria (Samuel):**
+1. Publicar no GitHub Pages: `index.html`, `config.js` e `sw.js`.
+2. Colar/publicar nova versao do `apps-script/Code.gs` no Apps Script do App Gestao.
+3. Testar no celular e no PC: login, menu lateral, abrir Painel de Contratacoes, central do servidor comum, central da chefia e comportamento offline.
+
+**Observacao:** a secao anterior sobre "avisos do aparelho no PWA" fica superada por esta decisao posterior. O instalavel permanece; apenas a notificacao nativa do navegador foi retirada.
+
+---
+
+## SESSAO 05/06/2026 (noite) — NOTA TECNICA RSC/TAE DOS PROJETOS
+
+**Demanda:** elaborar nova nota tecnica considerando que o projeto ficou mais robusto, com pesquisa aprofundada sobre o RSC-PCCTAE dos TAEs e conhecimento geral dos dois projetos: App Gestao/AppSEL e Painel de Contratacoes.
+
+**Pesquisa normativa realizada:**
+- Confirmada a instituicao do RSC-PCCTAE pela Lei nº 15.367/2026, que alterou a Lei nº 11.091/2005.
+- Confirmado que o RSC-PCCTAE e voltado ao reconhecimento de saberes e competencias nao necessariamente derivados de diplomacao formal, com uso para fins de Incentivo a Qualificacao.
+- A lei preve seis grupos de requisitos: GT/comissoes; projetos institucionais/gestao/inovacao; premiacao; responsabilidades tecnico-administrativas/especializadas; funcoes/cargos; producao e difusao de conhecimento tecnico.
+- Ate 05/06/2026, nao foi localizado decreto federal definitivo de regulamentacao; a nota deixa claro que pontuacao e procedimento dependem do decreto e de norma interna/CRSC.
+
+**Nota tecnica criada:**
+- Arquivo: `NOTA_TECNICA_RSC_TAE_SISTEMA_CONTRATACOES_CPII.md`.
+- Word gerado: `NOTA_TECNICA_RSC_TAE_SISTEMA_CONTRATACOES_CPII_COMPLETA.docx`.
+- Estrutura: finalidade, contexto institucional, descricao dos dois projetos, robustez tecnica, base normativa, matriz de aderencia ao RSC, comprovantes recomendados e minuta de texto para memorial.
+- A nota recebeu quadros especificos de mapeamento funcional do App Gestao e do Painel, incluindo Fila, Etapas, Capacidade, Historico, Central de Notificacoes, notificacoes por e-mail, PWA/avisos no aparelho, Gantt, KPIs, filtros e leitura publica somente leitura.
+
+**Caderno de evidencias visuais:**
+- Arquivo Word criado: `CADERNO_PRINTS_FUNCOES_APP_GESTAO_E_PAINEL.docx`.
+- Pasta de prints: `prints_apps/`.
+- Conteudo: login, aba Etapas, Central de Notificacoes, pagina textual sobre notificacoes por e-mail, aba Fila, simulacao de etapas, Capacidade, Historico, Detalhe do processo, menu de instalacao/avisos PWA, Painel publico com KPIs/Gantt e processo expandido no Painel.
+- Validacao: pacote `.docx` conferido internamente, com `word/document.xml` presente; caderno possui 11 imagens embutidas.
+
+**Enquadramento RSC recomendado:**
+- Requisito II — Projetos institucionais, gestao e inovacao: aderencia muito forte.
+- Requisito IV — Responsabilidades tecnico-administrativas e/ou especializadas: aderencia forte, principalmente com declaracao/ato/e-mails de responsabilidade.
+- Requisito VI — Producao, prospeccao e difusao de conhecimento tecnico: aderencia forte, com README, checklist, plano diario, notas tecnicas, codigo e orientacoes de replicacao.
+- Requisito I — GT/comissao/similar: possivel, se houver portaria, despacho, ata, e-mail formal ou declaracao de participacao/designacao.
+- Requisito III e V: somente incluir se houver comprovante proprio de premiacao ou funcao/cargo.
+
+**Recomendacao pratica:** tratar App Gestao e Painel como uma solucao institucional integrada, destacando inovacao na gestao de contratacoes, seguranca por separacao de permissoes, automacao de prazos/e-mails, visualizacao gerencial e possibilidade de replicacao por campus/unidade. Para anexos, usar prints com dados sensiveis tarjados e juntar declaracao da chefia sobre finalidade, autoria, uso e impacto.
+
+---
+
+## SESSAO 05/06/2026 (noite) — APP GESTAO: AVISOS DO APARELHO NO PWA (SUPERADO POR DECISAO POSTERIOR)
+
+**Melhoria solicitada:** apos transformar o App Gestao em PWA instalavel, permitir uma notificacao/confirmacao quando o servidor instala ou abre o app instalado no Android, iPhone ou Windows.
+
+**Ajuste aplicado no App Gestao:**
+- Menu do usuario ganhou a acao `Ativar avisos no aparelho`, disponivel tambem para servidor comum (nao fica preso a aba Config, que e restrita a chefia).
+- O app detecta modo instalado/standalone (`display-mode` e `navigator.standalone` no iOS), alem dos eventos `beforeinstallprompt` e `appinstalled` em navegadores Chromium.
+- Quando o navegador oferece prompt nativo de instalacao, o menu muda para fluxo de instalacao; depois da instalacao, o app agenda a ativacao dos avisos.
+- A permissao de notificacao so e pedida apos acao direta do usuario. Se autorizada, o app mostra uma notificacao local de confirmacao: `Avisos do App Gestao estao ativos neste aparelho`.
+- O `sw.js` passou a tratar clique em notificacao (`notificationclick`), focando/abrindo o App Gestao. Cache do service worker subiu para `app-gestao-reitoria-v2`.
+- O `manifest.json` ganhou `id` estavel (`https://decofcp2-afk.github.io/app_gestao-reitoria/`), importante para identidade do PWA, especialmente em iOS/iPadOS.
+
+**Backend / Apps Script:**
+- Criada a rota publica permitida `registrarDispositivoPwaApp`.
+- Ao ativar/registrar, o Apps Script cria/atualiza a aba oculta `__pwa_dispositivos`, com servidor, matricula, identificador local do aparelho, plataforma, modo de exibicao, permissao e suporte a Push API.
+- O registro e atualizado por par `Matricula + DeviceId`, evitando duplicar linha a cada abertura.
+- Quando a permissao muda para `granted` pela primeira vez naquele aparelho, a chefia recebe e-mail informando que o servidor autorizou avisos do App Gestao no dispositivo.
+
+**Decisao tecnica importante:** esta entrega habilita notificacao local de confirmacao + registro/e-mail de ativacao. Ainda NAO e envio push remoto automatico de prazos com o app fechado. Para isso, sera preciso uma etapa propria de Web Push com VAPID/servidor emissor (ou servico externo), gravando `PushSubscription` e disparando mensagens a partir da regra atual de prazos.
+
+**Validacao local:**
+- `manifest.json` parseado com sucesso.
+- `sw.js`, `apps-script/Code.gs` e os 3 scripts embutidos do `index.html` compilaram via `vm.Script`.
+- `git diff --check` passou.
+- Preview local em `http://127.0.0.1:4177/index.html` carregou a tela de login sem erros de console e com o novo item de menu presente no DOM.
+
+**Publicacao necessaria (Samuel):**
+1. Publicar no GitHub Pages: `index.html`, `manifest.json` e `sw.js`.
+2. Colar o `apps-script/Code.gs` atualizado no Apps Script do App Gestao e implantar nova versao.
+3. Testar em Android/Windows: abrir no Chrome/Edge, instalar pelo prompt/menu, entrar no app e ativar avisos.
+4. Testar em iPhone: iOS 16.4+, adicionar a Tela de Inicio, abrir pelo icone instalado, entrar no app e ativar avisos pelo menu do usuario.
+5. Conferir se a aba oculta `__pwa_dispositivos` foi criada e se a chefia recebeu o e-mail na primeira autorizacao.
+
+---
+
+## SESSAO 05/06/2026 (noite) — APP GESTAO: 3 FUNCOES NOVAS (NOTIFICACOES, DETALHE NA FILA, DRAG-AND-DROP)
+
+Tres funcionalidades implementadas no App Gestao, todas AGUARDANDO REPUBLICACAO no GitHub Pages + Apps Script (Implantar -> Nova versao).
+
+**1. Central de Notificacoes (sininho no topo).**
+- Sininho com badge de contagem no cabecalho. Painel com duas abas clicaveis — Vencidos e Prazos proximos — no estilo de filtro da aba Capacidade.
+- AGRUPAMENTO POR PROCESSO em PILHA (estilo "Instants/stories" do Instagram): quando um processo tem varias etapas na mesma categoria, elas viram uma pilha de cartas empilhadas com contador "+N", em vez de varios itens soltos. 1 notificacao = item simples (clica e abre o detalhe). 2+ = pilha: o primeiro toque expande, e com a pilha aberta clicar em qualquer etapa abre o detalhe do processo. Isso evita o "amontoado" quando um processo tem muitas etapas vencendo.
+- Backend: nova rota `getAlertasApp` reusa EXATAMENTE a mesma varredura dos e-mails (`enviarAvisosPrazo`: proximos = vence em ate 3 dias uteis; vencidos = prazo estourado), mas RETORNA a lista em vez de enviar e-mail. Garante paridade com os avisos por e-mail sem duplicar a regra de prazo. Vale para chefe e servidor comum.
+- Clicar numa notificacao leva direto ao detalhe do processo (modal com as etapas) — via novo helper `abrirProcessoPorId_`.
+
+**2. Botao "Abrir detalhe" na Fila — so processos RETORNADOS.**
+- No painel expandido do card da fila, botao "Abrir detalhe do processo" aparece apenas para RETORNADOS (que ja tem etapas reais). Processos A INICIAR / SEM D0 nao ganham o botao, pois so possuem etapas simuladas, ja exibidas inline. Reusa a funcao de detalhe existente.
+
+**3. Drag-and-drop na Fila (alca, persistente, so chefia).**
+- Alca de arrastar (simbolo de pegada) no card da fila, visivel so para a chefia. Arrasta so pela alca; o resto do card continua expandindo as etapas. Usa SortableJS (CDN, degrada para as setas se nao carregar). Funciona igual no celular e no PC.
+- A ordem manual e SALVA na planilha (nova coluna `OrdemFila` na aba Processos) via nova rota `salvarOrdemFilaApp` (restrita a chefia). As setas tambem passam a salvar. A ordem sobrevive ao recarregar.
+- IMPORTANTE: a ordem manual sobrescreve a ordenacao automatica por prioridade. Avisar a chefia.
+
+**Validacao:** logica das funcoes novas testada isoladamente com Node (sintaxe + execucao: badge somando certo, agrupamento por data, ordenacao da fila com itens sem ordem ao fim, persistencia enviando o array de IDs). O mount do shell voltou a servir versoes truncadas dos arquivos (problema ja conhecido) — `node --check` no arquivo inteiro foi impossivel pelo terminal; a integridade foi confirmada pela ferramenta de arquivos (autoritativa), que localizou todas as funcoes intactas.
+
+**4. Escopo da central por perfil (correcao).** O perfil comum estava vendo TODAS as notificacoes. Corrigido: servidor comum ve so os processos onde e o responsavel (mesmo criterio do e-mail); o chefe continua vendo tudo da equipe. So no backend (Code.gs).
+
+**5. E-mails de aviso agrupados por processo.** Antes o sistema mandava 1 e-mail por etapa vencida — um processo com 5 etapas gerava 5 e-mails. Agora manda 1 e-mail por processo, com uma tabela das etapas (Etapa, Responsavel, Situacao, Prazo). Cada servidor recebe so as etapas dele; a chefia recebe as etapas que dependem do SEL. Vencidos e prazos proximos seguem separados (mantendo os dois horarios). Muito mais sustentavel de analisar. So no backend (Code.gs).
+
+**6. Ajustes de texto e destinatarios dos e-mails.** (a) Nome no e-mail passou a ser "Gestao de Etapas - SEL" (cabecalho e assinatura). (b) Etapas marcadas como "Aguardando requisitante" deixam de gerar e-mail para os servidores de licitacoes e para a chefia — vao SOMENTE para o setor requisitante (nao faz sentido cobrar a equipe por algo que esta na mao do requisitante). (c) O e-mail do setor requisitante nao lista mais os responsaveis internos do SEL (nomes que nao dizem nada a ele) e passou a usar linguagem de cobranca, deixando claro que o atraso posterga o prazo final do processo. So no backend (Code.gs).
+
+**Publicacao necessaria (Samuel):**
+1. Criar a coluna `OrdemFila` na aba "🏛 Processos" (cabecalho exatamente "OrdemFila", pode ser a ultima coluna, deixar vazia — o app preenche no 1o arraste).
+2. Colar `apps-script/Code.gs` e `index.html` atualizados no repositorio do App Gestao (GitHub Pages) e no Apps Script.
+3. Implantar -> Nova versao.
+4. Testar: sininho + clique abrindo o detalhe; pilha por processo; perfil comum vendo so o que e dele; botao detalhe nos retornados; arrastar pela alca no celular e no PC; e-mail de aviso chegando agrupado por processo.
+
+---
+
+## SESSAO 04/06/2026 (tarde) — APP GESTAO COMO PWA INSTALAVEL
+
+**Melhoria solicitada:** permitir que o App Gestao seja instalado/baixado no celular como o Dashboard Financeiro, abrindo em tela cheia/standalone pelo Edge ou Chrome.
+
+**Ajuste aplicado no App Gestao:**
+- Criado `manifest.json` com `display: standalone` e `display_override` incluindo `fullscreen`.
+- Criado `sw.js` para registrar o app como PWA e cachear apenas arquivos estaticos locais.
+- Adicionados icones PNG `icons/icon-192.png` e `icons/icon-512.png`, baseados na identidade visual do `icon.svg`.
+- `index.html` passou a apontar para o manifest, apple-touch-icon PNG e registrar o service worker.
+- Viewport ajustado com `viewport-fit=cover` para melhor uso de area segura em app instalado.
+- `og:url` corrigido para `https://decofcp2-afk.github.io/app_gestao-reitoria/`.
+
+**Decisao de seguranca:** o service worker nao cacheia respostas do Apps Script. Chamadas a `script.google.com` e `script.googleusercontent.com` seguem sempre pela rede, evitando dados operacionais antigos ou sensiveis no cache do PWA.
+
+**Validacao local:** `manifest.json` parseado com sucesso; `sw.js`, `index.html` e `apps-script/Code.gs` compilaram em `vm.Script`; icones PNG foram gerados e conferidos visualmente; `git diff --check` passou.
+
+**Publicacao necessaria:** subir para o GitHub Pages os novos arquivos `manifest.json`, `sw.js`, pasta `icons/` e o `index.html` atualizado. Depois abrir o App Gestao no Edge/Chrome mobile e usar `Adicionar a tela inicial`/`Instalar app`.
+
+---
+
+## SESSAO 04/06/2026 (tarde) — E-MAIL DO REQUISITANTE EM PROCESSOS CONCLUIDOS
+
+**Ajuste aplicado:** no detalhe do processo do App Gestao, o botao `Adicionar/Editar e-mail do requisitante` passa a ficar oculto quando o processo estiver concluido. Processos concluidos nao geram novos avisos por e-mail, entao manter essa acao visivel poderia sugerir uma utilidade operacional que nao existe.
+
+**Escopo:** alteracao somente visual no `index.html` do App Gestao. O botao de acesso/insercao de link SUAP permanece disponivel, pois ainda e util para consulta.
+
+**Validacao local:** o JavaScript embutido do `index.html` compilou com sucesso em `vm.Script`.
+
+**Publicacao necessaria:** publicar o `index.html` atualizado no GitHub Pages.
 
 ---
 
@@ -18,6 +191,23 @@
 **Validacao local:** o JavaScript embutido do App Gestao compilou com sucesso em `vm.Script`; `git diff --check` passou. Nao houve alteracao no `apps-script/Code.gs`.
 
 **Pendente Samuel:** publicar o `index.html` atualizado do App Gestao no GitHub Pages e testar no Edge mobile: login, carregar Etapas, abrir Capacidade e fazer uma acao simples controlada somente depois de confirmar que as leituras carregaram.
+
+---
+
+## SESSAO 04/06/2026 (tarde) — LINK SUAP EDITAVEL PELO APP GESTAO
+
+**Melhoria solicitada:** quando um processo for aberto nos detalhes do App Gestao, se ele ja tiver `Link SUAP`, o botao deve continuar servindo para acessar o processo. Se nao tiver link cadastrado, o mesmo local deve permitir inserir o link depois, em qualquer fase do processo.
+
+**Ajuste aplicado:**
+- No `index.html` do App Gestao, o botao do rodape do detalhe do processo agora mostra `Acessar processo no SUAP` quando ha URL valida.
+- Se o processo estiver sem link (`#` ou vazio), o botao aparece como `Inserir link do processo no SUAP` e abre um dialogo para colar a URL.
+- A tela valida URLs iniciadas por `http://` ou `https://`, salva localmente no processo aberto e atualiza o botao imediatamente.
+- No `apps-script/Code.gs`, foi criada a funcao `salvarLinkSuapProcessoApp`, liberada na API publica do App Gestao, gravando a coluna `Link SUAP` da aba `Processos`.
+- A permissao segue logica parecida com o e-mail do requisitante: exige usuario logado, mas nao depende de fase especifica. Assim, o link pode ser preenchido depois e passa a servir tanto no App Gestao quanto no Painel apos recarregar os dados.
+
+**Validacao local:** `index.html` e `apps-script/Code.gs` do App Gestao compilaram com sucesso em `vm.Script`; `git diff --check` passou.
+
+**Publicacao necessaria:** atualizar o `index.html` do App Gestao no GitHub Pages e colar/publicar nova versao do `apps-script/Code.gs` no Apps Script do App Gestao. Testar abrindo um processo sem link, inserir URL do SUAP, salvar, reabrir o processo e confirmar que o botao passa a acessar o SUAP.
 
 ---
 
